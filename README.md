@@ -65,7 +65,6 @@ npm run tauri dev
 linovelib-scraper/
 ├── backend/                # Python FastAPI backend
 │   ├── bilinovel/          # Novel scraper & EPUB engine
-│   ├── bilimanga/          # (Reserved) Manga scraper
 │   ├── server.py           # FastAPI server & REST API
 │   └── browser_utils.py    # Browser initialization helpers
 ├── src/                    # React frontend
@@ -86,6 +85,14 @@ linovelib-scraper/
 | 🔜 | **Amazon Kindle Integration** — Send downloaded EPUBs directly to your Kindle via Send-to-Kindle or USB |
 | 🔜 | **AI Language Translation** — Translate novel content to other languages using LLM APIs |
 | 🔜 | **Multi-Source Support** — Extend scraper support to additional light novel platforms beyond 嗶哩輕小說 |
+
+---
+
+## 🙏 Credits
+
+This project was inspired by and built upon the original scraping work from:
+
+- **[ShqWW/bilinovel-download](https://github.com/ShqWW/bilinovel-download)** — The original 嗶哩輕小說 downloader that laid the foundation for this project. We are grateful for the open-source contribution.
 
 ---
 
