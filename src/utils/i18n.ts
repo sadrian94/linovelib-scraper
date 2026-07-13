@@ -45,6 +45,7 @@ export const translations: Record<Language, Record<string, string>> = {
     chaptersCount: '章節',
     prevChapter: '上一章',
     nextChapter: '下一章',
+    'shelf.tooltip.convert': '字體轉換',
   },
   'zh-CN': {
     appName: '哔哩轻小说',
@@ -90,6 +91,7 @@ export const translations: Record<Language, Record<string, string>> = {
     chaptersCount: '章节',
     prevChapter: '上一章',
     nextChapter: '下一章',
+    'shelf.tooltip.convert': '字体转换',
   },
   'en': {
     appName: 'Bilinovel',
@@ -135,5 +137,6 @@ export const translations: Record<Language, Record<string, string>> = {
     chaptersCount: 'Chapters',
     prevChapter: 'Previous Chapter',
     nextChapter: 'Next Chapter',
+    'shelf.tooltip.convert': 'Convert Font',
   }
 };

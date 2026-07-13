@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Trash2, BookOpen } from 'lucide-react';
+import { Trash2, BookOpen, RefreshCw } from 'lucide-react';
 import { translations, Language } from '../utils/i18n';
 
 interface Book {
@@ -24,6 +24,7 @@ interface ShelfProps {
 export default function Shelf({ port, language, onRead }: ShelfProps) {
   const [books, setBooks] = useState<Book[]>([]);
   const [search, setSearch] = useState('');
+  const [converting, setConverting] = useState<string | null>(null);
 
   const t = (key: string) => translations[language]?.[key] || key;
 
@@ -48,6 +49,25 @@ export default function Shelf({ port, language, onRead }: ShelfProps) {
       fetchBooks();
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleConvert = async (bookId: string, volumeId: number) => {
+    const key = `${bookId}_${volumeId}`;
+    setConverting(key);
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/api/shelf/convert/${bookId}/${volumeId}`, {
+        method: 'POST'
+      });
+      if (res.ok) {
+        await fetchBooks();
+      } else {
+        console.error('Failed to convert book font');
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setConverting(null);
     }
   };
 
@@ -85,6 +105,13 @@ export default function Shelf({ port, language, onRead }: ShelfProps) {
                       className="p-2 bg-[#ff7233] text-black rounded-full hover:scale-110 transition-transform" title={t('readOnline')}
                     >
                       <BookOpen size={20} />
+                    </button>
+                    <button 
+                      onClick={() => handleConvert(book.book_id, book.volume_id)}
+                      disabled={converting === `${book.book_id}_${book.volume_id}`}
+                      className="p-2 bg-blue-600 text-white rounded-full hover:scale-110 transition-transform disabled:opacity-50 disabled:hover:scale-100" title={t('shelf.tooltip.convert')}
+                    >
+                      <RefreshCw size={20} className={converting === `${book.book_id}_${book.volume_id}` ? 'animate-spin' : ''} />
                     </button>
                     <button 
                       onClick={() => handleDelete(book.book_id, book.volume_id)}

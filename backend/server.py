@@ -449,6 +449,152 @@ def get_reader_asset(path: str):
     from fastapi.responses import FileResponse
     return FileResponse(str(resolved_path))
 
+@app.post("/api/shelf/convert/{book_id}/{volume_id}")
+def convert_shelf_book(book_id: str, volume_id: int):
+    import zhconv
+    import zipfile
+    import shutil
+
+    with get_db() as conn:
+        cursor = conn.cursor()
+        
+        # 1. Query conversion_mode config value
+        cursor.execute("SELECT VALUE FROM config WHERE KEY = 'conversion_mode'")
+        row_mode = cursor.fetchone()
+        conversion_mode = row_mode[0] if row_mode else "none"
+        
+        if conversion_mode == "none":
+            return {"status": "success", "message": "Conversion mode is none, no action taken."}
+            
+        # Determine locale
+        if conversion_mode == "traditional":
+            locale = "zh-hant"
+        elif conversion_mode == "simplified":
+            locale = "zh-hans"
+        else:
+            return {"status": "success", "message": f"Unknown conversion mode '{conversion_mode}', no action taken."}
+            
+        # 2. Retrieve book metadata paths (epub_path, cache_path)
+        cursor.execute("""
+            SELECT title, volume_name, author, publisher, epub_path, cache_path 
+            FROM shelf 
+            WHERE book_id = ? AND volume_id = ?
+        """, (book_id, volume_id))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Book not found in shelf")
+            
+        title, volume_name, author, publisher, epub_path, cache_path = row
+        
+        # Load download path config
+        dl_path_str = "./out"
+        cursor.execute("SELECT VALUE FROM config WHERE KEY = 'download_path'")
+        db_dl = cursor.fetchone()
+        if db_dl:
+            dl_path_str = db_dl[0]
+        dl_path = Path(dl_path_str).resolve()
+        
+        # Path Safety Guards
+        if not epub_path or not cache_path:
+            raise HTTPException(status_code=400, detail="Missing epub_path or cache_path in database")
+            
+        resolved_epub_path = Path(epub_path).resolve()
+        resolved_cache_path = Path(cache_path).resolve()
+        
+        if not (resolved_epub_path.is_relative_to(dl_path) and resolved_epub_path != dl_path):
+            raise HTTPException(status_code=403, detail="Access denied: epub_path outside download directory")
+        if not (resolved_cache_path.is_relative_to(dl_path) and resolved_cache_path != dl_path):
+            raise HTTPException(status_code=403, detail="Access denied: cache_path outside download directory")
+            
+        if not resolved_cache_path.exists() or not resolved_cache_path.is_dir():
+            raise HTTPException(status_code=404, detail="Cache directory not found")
+            
+        # 3. Convert metadata fields in database
+        conv_title = zhconv.convert(title, locale) if title else title
+        conv_volume_name = zhconv.convert(volume_name, locale) if volume_name else volume_name
+        conv_author = zhconv.convert(author, locale) if author else author
+        conv_publisher = zhconv.convert(publisher, locale) if publisher else publisher
+        
+        cursor.execute("""
+            UPDATE shelf 
+            SET title = ?, volume_name = ?, author = ?, publisher = ? 
+            WHERE book_id = ? AND volume_id = ?
+        """, (conv_title, conv_volume_name, conv_author, conv_publisher, book_id, volume_id))
+        
+        # 4. Walk cache_path and convert all .xhtml, .opf, and .ncx files using zhconv.convert
+        # Ensure all path operations are protected under strict subpath checks.
+        for root, dirs, files in os.walk(resolved_cache_path):
+            for file in files:
+                file_path = Path(root) / file
+                # Ensure the resolved file path is inside resolved_cache_path
+                if not file_path.resolve().is_relative_to(resolved_cache_path):
+                    continue
+                if file.endswith(('.xhtml', '.opf', '.ncx')):
+                    try:
+                        content = file_path.read_text(encoding="utf-8")
+                        converted_content = zhconv.convert(content, locale)
+                        file_path.write_text(converted_content, encoding="utf-8")
+                    except Exception as e:
+                        print(f"Error converting file {file_path}: {e}")
+                        
+        # 5. Recreate/re-zip the .epub file using the converted cache path files
+        # (mimetype and container.xml should be preserved)
+        mimetype_content = b"application/epub+zip"
+        container_content = None
+        
+        if resolved_epub_path.exists():
+            try:
+                with zipfile.ZipFile(str(resolved_epub_path), "r") as zf:
+                    if "mimetype" in zf.namelist():
+                        mimetype_content = zf.read("mimetype")
+                    if "META-INF/container.xml" in zf.namelist():
+                        container_content = zf.read("META-INF/container.xml")
+            except Exception as e:
+                print(f"Failed to read original epub: {e}")
+                
+        if not container_content:
+            container_content = b"""<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+    <rootfiles>
+        <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+   </rootfiles>
+</container>"""
+
+        # Re-zip to a temporary file
+        temp_epub_path = Path(str(resolved_epub_path) + ".tmp")
+        try:
+            with zipfile.ZipFile(str(temp_epub_path), "w", zipfile.ZIP_DEFLATED) as zf:
+                # mimetype MUST be first and ZIP_STORED (not compressed)
+                zf.writestr("mimetype", mimetype_content, compress_type=zipfile.ZIP_STORED)
+                zf.writestr("META-INF/container.xml", container_content)
+                
+                # Walk the cache path / "OEBPS" directory and write everything to the zip
+                oebps_dir = resolved_cache_path / "OEBPS"
+                if oebps_dir.exists() and oebps_dir.is_dir():
+                    for root, dirs, files in os.walk(oebps_dir):
+                        for file in files:
+                            file_path = Path(root) / file
+                            if not file_path.resolve().is_relative_to(oebps_dir):
+                                continue
+                            # e.g., relative to resolved_cache_path (which starts with OEBPS/...)
+                            rel_path = file_path.relative_to(resolved_cache_path)
+                            zf.write(str(file_path), str(rel_path).replace("\\", "/"))
+                            
+            # Safely replace the old epub
+            if resolved_epub_path.exists():
+                os.remove(str(resolved_epub_path))
+            os.rename(str(temp_epub_path), str(resolved_epub_path))
+        except Exception as e:
+            if temp_epub_path.exists():
+                try:
+                    os.remove(str(temp_epub_path))
+                except Exception:
+                    pass
+            raise HTTPException(status_code=500, detail=f"Failed to rebuild EPUB: {e}")
+            
+        conn.commit()
+        return {"status": "success"}
+
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
     uvicorn.run(app, host="127.0.0.1", port=port)
