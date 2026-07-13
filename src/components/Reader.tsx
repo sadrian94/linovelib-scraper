@@ -19,29 +19,27 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
   const [content, setContent] = useState('');
   const [fontSize, setFontSize] = useState(16);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [bookMeta, setBookMeta] = useState<any>(null);
 
   const readerRef = useRef<HTMLDivElement>(null);
   const lastSaveRef = useRef(0);
-  const isFirstLoadRef = useRef(true);
+  const savedScrollPositionRef = useRef(0.0);
 
   // Fetch Table of Contents and metadata
   useEffect(() => {
     const loadBook = async () => {
       try {
-        // Retrieve book details from SQLite
         const shelfRes = await fetch(`http://127.0.0.1:${port}/api/shelf`);
         const shelfData = await shelfRes.json();
-        const bookMeta = shelfData.find((b: any) => b.book_id === bookId && b.volume_id === volumeId);
-        if (!bookMeta) return;
+        const meta = shelfData.find((b: any) => b.book_id === bookId && b.volume_id === volumeId);
+        if (!meta) return;
+        setBookMeta(meta);
 
-        const cachePath = bookMeta.cache_path;
-
-        // Read toc.ncx XML text
+        const cachePath = meta.cache_path;
         const tocUrl = `http://127.0.0.1:${port}/api/reader/asset?path=${encodeURIComponent(cachePath + '/OEBPS/toc.ncx')}`;
         const tocRes = await fetch(tocUrl);
         const tocText = await tocRes.text();
 
-        // Simple parser for NCX XML
         const parser = new DOMParser();
         const xmlDoc = parser.parseFromString(tocText, "text/xml");
         const navPoints = xmlDoc.getElementsByTagName("navPoint");
@@ -50,15 +48,12 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
         for (let i = 0; i < navPoints.length; i++) {
           const title = navPoints[i].getElementsByTagName("text")[0]?.textContent || '';
           const src = navPoints[i].getElementsByTagName("content")[0]?.getAttribute("src") || '';
-          // Remove text path prefix
           const file = src.replace('Text/', '');
           chaps.push({ title, file });
         }
 
         setChapters(chaps);
-
-        // Restore reading progress if any
-        const progressChapter = bookMeta.reading_progress_chapter || 0;
+        const progressChapter = meta.reading_progress_chapter || 0;
         setActiveIdx(progressChapter < chaps.length ? progressChapter : 0);
       } catch (e) {
         console.error(e);
@@ -68,17 +63,31 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
     loadBook();
   }, [bookId, volumeId, port]);
 
+  // Capture image load events to adjust scroll position as height changes dynamically
+  useEffect(() => {
+    const handleImageLoad = () => {
+      if (readerRef.current && savedScrollPositionRef.current > 0) {
+        readerRef.current.scrollTop = savedScrollPositionRef.current * readerRef.current.scrollHeight;
+      }
+    };
+    const container = readerRef.current;
+    if (container) {
+      container.addEventListener('load', handleImageLoad, true); // Capture phase
+    }
+    return () => {
+      if (container) {
+        container.removeEventListener('load', handleImageLoad, true);
+      }
+    };
+  }, [content]);
+
   // Load active chapter content
   useEffect(() => {
-    if (chapters.length === 0) return;
+    if (chapters.length === 0 || !bookMeta) return;
     let active = true;
     const loadChapter = async () => {
       try {
-        const shelfRes = await fetch(`http://127.0.0.1:${port}/api/shelf`);
-        const shelfData = await shelfRes.json();
-        const bookMeta = shelfData.find((b: any) => b.book_id === bookId && b.volume_id === volumeId);
         const cachePath = bookMeta.cache_path;
-
         const chapFile = chapters[activeIdx].file;
         const chapUrl = `http://127.0.0.1:${port}/api/reader/asset?path=${encodeURIComponent(cachePath + '/OEBPS/Text/' + chapFile)}`;
         const res = await fetch(chapUrl);
@@ -86,10 +95,9 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
 
         if (!active) return;
 
-        // Strip HTML envelopes, headers, stylesheet links to prevent breaks
         const doc = new DOMParser().parseFromString(rawText, 'text/html');
         
-        // Re-write image source paths to serve from FastAPI static endpoint
+        // Re-write image source paths
         const images = doc.getElementsByTagName('img');
         for (let i = 0; i < images.length; i++) {
           const src = images[i].getAttribute('src') || '';
@@ -105,13 +113,11 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
         setContent(bodyHtml);
 
         // Restore scroll progress
-        const savedScroll = isFirstLoadRef.current ? (bookMeta.reading_progress_scroll || 0.0) : 0.0;
-        isFirstLoadRef.current = false;
-        setTimeout(() => {
-          if (active && readerRef.current) {
-            readerRef.current.scrollTop = savedScroll * readerRef.current.scrollHeight;
-          }
-        }, 100);
+        const savedScroll = bookMeta.reading_progress_scroll || 0.0;
+        savedScrollPositionRef.current = savedScroll;
+        if (readerRef.current) {
+          readerRef.current.scrollTop = savedScroll * readerRef.current.scrollHeight;
+        }
 
         // Save current chapter progress
         await fetch(`http://127.0.0.1:${port}/api/shelf/progress`, {
@@ -133,6 +139,26 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
     loadChapter();
     return () => {
       active = false;
+    };
+  }, [activeIdx, chapters, bookMeta, bookId, volumeId, port]);
+
+  // Save final scroll position on unmount or before chapter/book switch
+  useEffect(() => {
+    return () => {
+      if (readerRef.current && chapters.length > 0) {
+        const container = readerRef.current;
+        const position = container.scrollTop / container.scrollHeight;
+        fetch(`http://127.0.0.1:${port}/api/shelf/progress`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            book_id: bookId,
+            volume_id: volumeId,
+            chapter_index: activeIdx,
+            scroll_position: position
+          })
+        }).catch(console.error);
+      }
     };
   }, [activeIdx, chapters, bookId, volumeId, port]);
 
