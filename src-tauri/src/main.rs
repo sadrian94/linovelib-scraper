@@ -19,8 +19,18 @@ fn main() {
 
     // Start Python FastAPI sidecar
     let python_exec = if cfg!(target_os = "windows") { "python" } else { "python3" };
+    
+    // Resolve relative path of the python script depending on current working directory
+    let mut script_path = std::path::PathBuf::from("backend/server.py");
+    if !script_path.exists() {
+        let parent_path = std::path::PathBuf::from("../backend/server.py");
+        if parent_path.exists() {
+            script_path = parent_path;
+        }
+    }
+
     let child = Command::new(python_exec)
-        .args(["backend/server.py", &port.to_string()])
+        .args([script_path.to_str().unwrap_or("backend/server.py"), &port.to_string()])
         .spawn();
 
     let server_child = match child {
