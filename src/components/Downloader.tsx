@@ -14,41 +14,60 @@ export default function Downloader({ port }: { port: number }) {
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
+    const mountedRef = { current: true };
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+
     const connectWS = () => {
+      if (!mountedRef.current) return;
       const ws = new WebSocket(`ws://127.0.0.1:${port}/api/download/ws`);
       wsRef.current = ws;
 
       ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.type === 'init') {
-          setLogs(data.logs);
-          setProgress(data.progress);
-          setStatus(data.status);
-          setInputPrompt(data.input_prompt);
-        } else if (data.type === 'log') {
-          setLogs(prev => [...prev, data.message]);
-        } else if (data.type === 'progress') {
-          setProgress(data.value);
-        } else if (data.type === 'status') {
-          setStatus(data.status);
-          if (data.status !== 'input_required') {
-            setInputPrompt('');
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'init') {
+            setLogs(data.logs);
+            setProgress(data.progress);
+            setStatus(data.status);
+            setInputPrompt(data.input_prompt);
+            if (data.input_options) setInputOptions(data.input_options);
+          } else if (data.type === 'log') {
+            setLogs(prev => [...prev, data.message]);
+          } else if (data.type === 'progress') {
+            setProgress(data.value);
+          } else if (data.type === 'status') {
+            setStatus(data.status);
+            if (data.status !== 'input_required') {
+              setInputPrompt('');
+            }
+          } else if (data.type === 'input_prompt') {
+            setInputPrompt(data.message);
+            setInputOptions(data.options || []);
+            setSubmitVal('');
+            setStatus('input_required');
           }
-        } else if (data.type === 'input_prompt') {
-          setInputPrompt(data.message);
-          setInputOptions(data.options || []);
-          setSubmitVal('');
-          setStatus('input_required');
+        } catch (e) {
+          console.error('Failed to parse WebSocket message:', e);
         }
       };
 
+      ws.onerror = (event) => {
+        console.error('WebSocket error:', event);
+      };
+
       ws.onclose = () => {
-        setTimeout(connectWS, 2000);
+        if (mountedRef.current) {
+          reconnectTimeout = setTimeout(connectWS, 2000);
+        }
       };
     };
 
     connectWS();
-    return () => wsRef.current?.close();
+    return () => {
+      mountedRef.current = false;
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      wsRef.current?.close();
+    };
   }, [port]);
 
   useEffect(() => {
