@@ -59,9 +59,10 @@ def create_browser() -> Chromium:
 
     # Read headless configuration from DB
     headless = True
+    db_path = Path(__file__).resolve().parent.parent / "bili-config.db"
     try:
         import sqlite3
-        conn = sqlite3.connect("./bili-config.db")
+        conn = sqlite3.connect(str(db_path))
         cursor = conn.cursor()
         cursor.execute("SELECT VALUE FROM config WHERE KEY = 'headless_mode'")
         row = cursor.fetchone()

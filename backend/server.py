@@ -23,7 +23,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DB_PATH = Path("./bili-config.db")
+from contextlib import contextmanager
+
+DB_PATH = Path(__file__).resolve().parent.parent / "bili-config.db"
+
+@contextmanager
+def get_db():
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.execute("PRAGMA journal_mode=DELETE")
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 # Global State for Active Download Task
 class DownloadSession:
@@ -38,18 +49,36 @@ class DownloadSession:
         self.input_value = ""
         self.ws_clients = set()
         self.loop = None
+        self.lock = threading.Lock()
 
     def write_log(self, text: str):
-        self.logs.append(text)
+        with self.lock:
+            self.logs.append(text)
         self.broadcast({"type": "log", "message": text})
 
+    def get_logs_copy(self):
+        with self.lock:
+            return list(self.logs)
+
     def set_progress(self, val: int):
-        self.progress = val
+        with self.lock:
+            self.progress = val
         self.broadcast({"type": "progress", "value": val})
 
     def set_status(self, stat: str):
-        self.status = stat
+        with self.lock:
+            self.status = stat
         self.broadcast({"type": "status", "status": stat})
+
+    def start_download_safe(self) -> bool:
+        with self.lock:
+            if self.active:
+                return False
+            self.active = True
+            self.logs = []
+            self.progress = 0
+            self.status = "downloading"
+            return True
 
     def request_input(self, prompt: str, options: list = []) -> str:
         self.input_needed_prompt = prompt
@@ -83,11 +112,6 @@ class DownloadSession:
                 self.ws_clients.remove(ws)
 
 session = DownloadSession()
-
-def get_db():
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.execute("PRAGMA journal_mode=DELETE")
-    return conn
 
 def init_db():
     with get_db() as conn:
@@ -259,8 +283,8 @@ class MockSignal:
             session.set_progress(val)
         elif self.name == "hang" and self.edit_line:
             self.edit_line._is_hidden = False
-            # Wait for user input through WebSocket
-            prompt = session.input_needed_prompt or "请输入所需資訊："
+            logs = session.get_logs_copy()
+            prompt = session.input_needed_prompt or (logs[-1] if logs else "请输入所需資訊：")
             user_input = session.request_input(prompt, self.edit_line.options)
             self.edit_line._text = user_input
             self.edit_line._is_hidden = True
@@ -292,17 +316,14 @@ def run_download_thread(book_id: str, volume_id: str, config: dict):
         session.write_log(f"Download thread crashed: {e}")
         session.set_status("failed")
     finally:
-        session.active = False
+        with session.lock:
+            session.active = False
 
 @app.post("/api/download")
 def start_download(req: DownloadRequest):
-    if session.active:
+    if not session.start_download_safe():
         raise HTTPException(status_code=400, detail="Another download is already in progress")
-    session.active = True
-    session.logs = []
-    session.progress = 0
     cfg = get_config()
-    
     thread = threading.Thread(target=run_download_thread, args=(req.book_id, req.volume_id, cfg), daemon=True)
     thread.start()
     return {"status": "started"}
@@ -327,45 +348,50 @@ async def websocket_endpoint(websocket: WebSocket):
     # Send initial state
     await websocket.send_text(json.dumps({
         "type": "init",
-        "logs": session.logs,
+        "logs": session.get_logs_copy(),
         "progress": session.progress,
         "status": session.status,
         "input_prompt": session.input_needed_prompt if session.status == "input_required" else ""
     }))
     try:
         while True:
-            await websocket.receive_text() # Keep connection alive
+            await websocket.receive_text()
     except WebSocketDisconnect:
-        session.ws_clients.remove(websocket)
+        pass
+    finally:
+        session.ws_clients.discard(websocket)
 
 # Static assets routing for reader images and texts
 @app.get("/api/reader/asset")
 def get_reader_asset(path: str):
+    # Resolve requested path
+    resolved_path = Path(path).resolve()
+    
+    # Resolve current workspace path & out path
+    workspace_path = Path(__file__).resolve().parent.parent
+    
+    # Load download_path from DB config if exists, otherwise default to "./out"
+    dl_path_str = "./out"
     try:
-        resolved_path = Path(path).resolve()
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT VALUE FROM config WHERE KEY = 'download_path'")
+            row = cursor.fetchone()
+            if row:
+                dl_path_str = row[0]
     except Exception:
+        pass
+    dl_path = Path(dl_path_str).resolve()
+
+    # Safety checks
+    if not (resolved_path.is_relative_to(workspace_path) or resolved_path.is_relative_to(dl_path)):
         raise HTTPException(status_code=403, detail="Access denied")
         
-    workspace_dir = Path(__file__).resolve().parent.parent
-    try:
-        cfg = get_config()
-        download_dir = Path(cfg.get("download_path", "./out")).resolve()
-    except Exception:
-        download_dir = Path("./out").resolve()
-        
-    def is_subpath(child_path: Path, parent_path: Path) -> bool:
-        child = os.path.normcase(os.path.abspath(child_path))
-        parent = os.path.normcase(os.path.abspath(parent_path))
-        return child == parent or child.startswith(parent + os.sep)
-        
-    if not (is_subpath(resolved_path, workspace_dir) or is_subpath(resolved_path, download_dir)):
-        raise HTTPException(status_code=403, detail="Access denied")
-        
-    if not os.path.exists(path):
+    if not resolved_path.is_file():
         raise HTTPException(status_code=404, detail="Asset not found")
-    # Serve HTML or images directly
+        
     from fastapi.responses import FileResponse
-    return FileResponse(path)
+    return FileResponse(str(resolved_path))
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
