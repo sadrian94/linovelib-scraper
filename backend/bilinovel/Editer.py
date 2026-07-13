@@ -510,7 +510,8 @@ class Editer:
         # Register in SQLite database
         conn = None
         try:
-            conn = sqlite3.connect("./bili-config.db")
+            db_path = Path(__file__).resolve().parent.parent.parent / "bili-config.db"
+            conn = sqlite3.connect(str(db_path))
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT OR REPLACE INTO shelf 
