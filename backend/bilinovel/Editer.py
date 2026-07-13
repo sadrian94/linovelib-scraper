@@ -42,6 +42,7 @@ class Editer:
         interval: int = 0,
         num_thread: int = 1,
     ):
+        self.book_no = book_no
         self.url_head = "https://www.linovelib.com"
         self.header = {
             "User-Agent": (
@@ -336,13 +337,13 @@ class Editer:
             self.pool.submit(self.get_html_content, url)
         img_path = self.img_path
         if is_gui:
+            from backend.server import session
             len_iter = len(self.img_url_map.items())
-            signal.emit("start")
+            session.set_progress(0)
             for i, (img_url, img_name) in enumerate(self.img_url_map.items()):
                 content = self.get_html_content(img_url, is_buffer=True)
                 (img_path / f"{img_name}.jpg").write_bytes(content)
-                signal.emit(int(100 * (i + 1) / len_iter))
-            signal.emit("end")
+                session.set_progress(int(100 * (i + 1) / len_iter))
         else:
             for img_url, img_name in tqdm(self.img_url_map.items()):
                 content = self.get_html_content(img_url)
@@ -423,13 +424,9 @@ class Editer:
         error_msg: str = "", is_gui: bool = False, signal=None, editline=None
     ) -> str:
         if is_gui:
-            print(error_msg)
-            signal.emit("hang")
-            time.sleep(1)
-            while not editline.isHidden():
-                time.sleep(1)
-            content = editline.text()
-            editline.clear()
+            # Call FastAPI server session blocking prompt instead of PyQt GUI
+            from backend.server import session
+            content = session.request_input(error_msg)
         else:
             content = input(error_msg)
         return content
@@ -488,6 +485,19 @@ class Editer:
             f"{self.book_name}-{self.volume['volume_name']}"
         )
         epub_file = self.epub_path / f"{epub_name}.epub"
+        
+        # Create OEBPS cache folder for local reading
+        import shutil
+        from datetime import datetime
+        import sqlite3
+        
+        cache_path = self.epub_path / ".library" / f"{self.book_no}_{self.volume_no}"
+        if cache_path.exists():
+            shutil.rmtree(cache_path)
+        
+        # Copy unpacked files before zip compression
+        shutil.copytree(self.temp_path / "OEBPS", cache_path / "OEBPS")
+        
         with zipfile.ZipFile(str(epub_file), "w", zipfile.ZIP_DEFLATED) as zf:
             for dirpath_str, _, filenames in os.walk(self.temp_path):
                 dirpath = Path(dirpath_str)
@@ -496,5 +506,34 @@ class Editer:
                     fpath = ""
                 for filename in filenames:
                     zf.write(str(dirpath / filename), f"{fpath}/{filename}" if fpath else filename)
+                    
+        # Register in SQLite database
+        conn = None
+        try:
+            conn = sqlite3.connect("./bili-config.db")
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO shelf 
+                (book_id, volume_id, title, volume_name, author, publisher, cover_path, epub_path, cache_path, download_date) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                self.book_no,
+                self.volume_no,
+                self.book_name,
+                self.volume['volume_name'],
+                self.author,
+                self.publisher,
+                str(cache_path / "OEBPS" / "Images" / "00.jpg"),
+                str(epub_file),
+                str(cache_path),
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            ))
+            conn.commit()
+        except Exception as e:
+            print(f"Failed to record book in shelf db: {e}")
+        finally:
+            if conn:
+                conn.close()
+                
         self.temp_path_io.cleanup()
         return str(epub_file)
