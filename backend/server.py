@@ -231,7 +231,8 @@ def get_config():
 def save_config(cfg: ConfigModel):
     with get_db() as conn:
         for k, v in cfg.dict().items():
-            conn.execute("INSERT OR REPLACE INTO config (KEY, VALUE) VALUES (?, ?)", (k, v))
+            if v is not None:
+                conn.execute("INSERT OR REPLACE INTO config (KEY, VALUE) VALUES (?, ?)", (k, v))
         conn.commit()
     return {"status": "success"}
 

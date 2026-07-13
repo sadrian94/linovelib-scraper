@@ -88,6 +88,7 @@ class Editer:
         if not hasattr(self, "conversion_mode"):
             self.conversion_mode = "traditional"  # Default fallback
             db_path = Path(__file__).resolve().parent.parent.parent / "bili-config.db"
+            conn = None
             try:
                 import sqlite3
                 conn = sqlite3.connect(str(db_path))
@@ -96,9 +97,11 @@ class Editer:
                 row = cursor.fetchone()
                 if row:
                     self.conversion_mode = row[0]
-                conn.close()
             except Exception as e:
                 print(f"Error querying conversion_mode from db: {e}")
+            finally:
+                if conn:
+                    conn.close()
 
         if not text:
             return text
