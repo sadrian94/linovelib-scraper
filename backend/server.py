@@ -30,8 +30,8 @@ DB_PATH = Path(__file__).resolve().parent.parent / "bili-config.db"
 @contextmanager
 def get_db():
     conn = sqlite3.connect(str(DB_PATH))
-    conn.execute("PRAGMA journal_mode=DELETE")
     try:
+        conn.execute("PRAGMA journal_mode=DELETE")
         yield conn
     finally:
         conn.close()
@@ -345,15 +345,15 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     session.ws_clients.add(websocket)
     session.loop = asyncio.get_running_loop()
-    # Send initial state
-    await websocket.send_text(json.dumps({
-        "type": "init",
-        "logs": session.get_logs_copy(),
-        "progress": session.progress,
-        "status": session.status,
-        "input_prompt": session.input_needed_prompt if session.status == "input_required" else ""
-    }))
     try:
+        # Send initial state
+        await websocket.send_text(json.dumps({
+            "type": "init",
+            "logs": session.get_logs_copy(),
+            "progress": session.progress,
+            "status": session.status,
+            "input_prompt": session.input_needed_prompt if session.status == "input_required" else ""
+        }))
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:

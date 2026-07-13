@@ -60,6 +60,7 @@ def create_browser() -> Chromium:
     # Read headless configuration from DB
     headless = True
     db_path = Path(__file__).resolve().parent.parent / "bili-config.db"
+    conn = None
     try:
         import sqlite3
         conn = sqlite3.connect(str(db_path))
@@ -68,9 +69,11 @@ def create_browser() -> Chromium:
         row = cursor.fetchone()
         if row:
             headless = row[0].strip().lower() == 'true'
-        conn.close()
     except Exception:
         pass
+    finally:
+        if conn:
+            conn.close()
 
     co = ChromiumOptions()
     co.set_browser_path(browser_path)
