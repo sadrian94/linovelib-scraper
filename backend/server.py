@@ -63,7 +63,11 @@ class DownloadSession:
         self.input_received_event.clear()
         self.input_value = ""
         # Block calling thread until submit_input REST endpoint releases it
-        self.input_received_event.wait()
+        success = self.input_received_event.wait(timeout=300)
+        if not success:
+            self.set_status("failed")
+            self.write_log("Input prompt timed out.")
+            raise RuntimeError("Input timed out")
         return self.input_value
 
     def broadcast(self, data: dict):
@@ -126,19 +130,23 @@ init_db()
 
 # Redirect standard outputs to WebSocket logs
 class WSStream:
-    def __init__(self):
-        self.encoding = sys.__stdout__.encoding if sys.__stdout__ else "utf-8"
-        self.errors = sys.__stdout__.errors if sys.__stdout__ else "strict"
+    def __init__(self, stream):
+        self.stream = stream
+        self.encoding = stream.encoding if stream else "utf-8"
+        self.errors = stream.errors if stream else "strict"
     def write(self, text):
         if text.strip():
             session.write_log(text.strip())
+        if self.stream:
+            self.stream.write(text)
     def flush(self):
-        pass
+        if self.stream:
+            self.stream.flush()
     def isatty(self):
         return False
 
-sys.stdout = WSStream()
-sys.stderr = WSStream()
+sys.stdout = WSStream(sys.__stdout__)
+sys.stderr = WSStream(sys.__stderr__)
 
 # REST APIs
 class ConfigModel(BaseModel):
@@ -219,6 +227,18 @@ class DownloadRequest(BaseModel):
     book_id: str
     volume_id: str
 
+class MockSignal:
+    def __init__(self, name=""):
+        self.name = name
+    def emit(self, val):
+        if self.name == "progress":
+            session.set_progress(val)
+        elif self.name == "cover":
+            # val is a tuple: (filepath, img_h, img_w)
+            session.write_log(f"Cover generated: {val[0]}")
+        else:
+            session.write_log(f"Signal {self.name} emitted: {val}")
+
 def run_download_thread(book_id: str, volume_id: str, config: dict):
     try:
         from backend.bilinovel.bilinovel_router import downloader_router
@@ -230,7 +250,11 @@ def run_download_thread(book_id: str, volume_id: str, config: dict):
             volume_no=volume_id,
             interval=int(config.get("interval", 500)),
             num_thread=int(config.get("numthread", 1)),
-            is_gui=True # Forces custom hang inputs
+            is_gui=True, # Forces custom hang inputs
+            hang_signal=MockSignal("hang"),
+            progressring_signal=MockSignal("progress"),
+            cover_signal=MockSignal("cover"),
+            edit_line_hang=MockSignal("edit_line")
         )
         session.set_status("completed")
     except Exception as e:
@@ -286,6 +310,26 @@ async def websocket_endpoint(websocket: WebSocket):
 # Static assets routing for reader images and texts
 @app.get("/api/reader/asset")
 def get_reader_asset(path: str):
+    try:
+        resolved_path = Path(path).resolve()
+    except Exception:
+        raise HTTPException(status_code=403, detail="Access denied")
+        
+    workspace_dir = Path(__file__).resolve().parent.parent
+    try:
+        cfg = get_config()
+        download_dir = Path(cfg.get("download_path", "./out")).resolve()
+    except Exception:
+        download_dir = Path("./out").resolve()
+        
+    def is_subpath(child_path: Path, parent_path: Path) -> bool:
+        child = os.path.normcase(os.path.abspath(child_path))
+        parent = os.path.normcase(os.path.abspath(parent_path))
+        return child == parent or child.startswith(parent + os.sep)
+        
+    if not (is_subpath(resolved_path, workspace_dir) or is_subpath(resolved_path, download_dir)):
+        raise HTTPException(status_code=403, detail="Access denied")
+        
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Asset not found")
     # Serve HTML or images directly
