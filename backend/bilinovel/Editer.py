@@ -519,17 +519,22 @@ class Editer:
         (self.temp_path / "mimetype").write_text("application/epub+zip")
 
     def get_epub(self) -> str:
-        epub_name = check_chars(
-            f"{self.book_name}-{self.volume['volume_name']}"
-        )
-        epub_file = self.epub_path / f"{epub_name}.epub"
-        
-        # Create OEBPS cache folder for local reading
         import shutil
-        from datetime import datetime
         import sqlite3
-        
-        cache_path = self.epub_path / ".library" / f"{self.book_no}_{self.volume_no}"
+        from datetime import datetime
+
+        # Build book subdirectory: out/書名/
+        safe_book_name = check_chars(self.book_name)
+        book_dir = self.epub_path / safe_book_name
+        book_dir.mkdir(parents=True, exist_ok=True)
+
+        # Filename: 書名 第X卷.epub
+        safe_volume_name = check_chars(self.volume['volume_name'])
+        epub_name = f"{safe_book_name} {safe_volume_name}"
+        epub_file = book_dir / f"{epub_name}.epub"
+
+        # Cache for in-app reader: out/書名/.library/bookno_volno/
+        cache_path = book_dir / ".library" / f"{self.book_no}_{self.volume_no}"
         if cache_path.exists():
             shutil.rmtree(cache_path)
         

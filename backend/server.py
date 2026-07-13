@@ -299,8 +299,20 @@ def delete_book(book_id: str, volume_id: int):
                         if cache_path.is_dir():
                             import shutil
                             shutil.rmtree(str(cache_path))
+                        # Remove the parent .library dir if now empty
+                        library_dir = cache_path.parent
+                        if library_dir.is_dir() and not any(library_dir.iterdir()):
+                            library_dir.rmdir()
+                # Remove parent book dir if now empty (no more volumes)
+                if epub:
+                    book_dir = Path(epub).resolve().parent
+                    if book_dir.is_relative_to(dl_path) and book_dir != dl_path:
+                        if book_dir.is_dir() and not any(f for f in book_dir.iterdir() if f.suffix == '.epub'):
+                            import shutil
+                            shutil.rmtree(str(book_dir))
             except Exception as e:
                 print(f"Error deleting files: {e}")
+
         conn.execute("DELETE FROM shelf WHERE book_id = ? AND volume_id = ?", (book_id, volume_id))
         conn.commit()
     return {"status": "success"}
