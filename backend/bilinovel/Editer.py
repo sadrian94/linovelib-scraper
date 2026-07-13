@@ -105,13 +105,16 @@ class Editer:
             for p in p_eles:
                 if p.style(style="display") == "none":
                     all_attrs = p.attrs
+                    class_key = None
+                    class_value = None
                     for key in all_attrs.keys():
                         if "data-" in key:
                             class_key = key
                             class_value = all_attrs[class_key]
-                    p_elements_to_remove = bf.find_all("p", {class_key: class_value})
-                    for p in p_elements_to_remove:
-                        p.decompose()
+                    if class_key is not None:
+                        p_elements_to_remove = bf.find_all("p", {class_key: class_value})
+                        for p in p_elements_to_remove:
+                            p.decompose()
 
             p_tags = bf.find_all("p")
             for p in p_tags:
