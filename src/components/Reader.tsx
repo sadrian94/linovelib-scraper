@@ -1,4 +1,5 @@
-
+import { useState, useEffect, useRef } from 'react';
+import { ArrowLeft, ZoomIn, ZoomOut, Menu } from 'lucide-react';
 
 interface ReaderProps {
   bookId: string;
@@ -7,16 +8,198 @@ interface ReaderProps {
   onClose: () => void;
 }
 
+interface Chapter {
+  title: string;
+  file: string;
+}
+
 export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps) {
+  const [chapters, setChapters] = useState<Chapter[]>([]);
+  const [activeIdx, setActiveIdx] = useState(0);
+  const [content, setContent] = useState('');
+  const [fontSize, setFontSize] = useState(16);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  const readerRef = useRef<HTMLDivElement>(null);
+
+  // Fetch Table of Contents and metadata
+  useEffect(() => {
+    const loadBook = async () => {
+      try {
+        // Retrieve book details from SQLite
+        const shelfRes = await fetch(`http://127.0.0.1:${port}/api/shelf`);
+        const shelfData = await shelfRes.json();
+        const bookMeta = shelfData.find((b: any) => b.book_id === bookId && b.volume_id === volumeId);
+        if (!bookMeta) return;
+
+        const cachePath = bookMeta.cache_path;
+
+        // Read toc.ncx XML text
+        const tocUrl = `http://127.0.0.1:${port}/api/reader/asset?path=${encodeURIComponent(cachePath + '/OEBPS/toc.ncx')}`;
+        const tocRes = await fetch(tocUrl);
+        const tocText = await tocRes.text();
+
+        // Simple parser for NCX XML
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(tocText, "text/xml");
+        const navPoints = xmlDoc.getElementsByTagName("navPoint");
+        
+        const chaps: Chapter[] = [];
+        for (let i = 0; i < navPoints.length; i++) {
+          const title = navPoints[i].getElementsByTagName("text")[0]?.textContent || '';
+          const src = navPoints[i].getElementsByTagName("content")[0]?.getAttribute("src") || '';
+          // Remove text path prefix
+          const file = src.replace('Text/', '');
+          chaps.push({ title, file });
+        }
+
+        setChapters(chaps);
+
+        // Restore reading progress if any
+        const progressChapter = bookMeta.reading_progress_chapter || 0;
+        setActiveIdx(progressChapter < chaps.length ? progressChapter : 0);
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    loadBook();
+  }, [bookId, volumeId, port]);
+
+  // Load active chapter content
+  useEffect(() => {
+    if (chapters.length === 0) return;
+    const loadChapter = async () => {
+      try {
+        const shelfRes = await fetch(`http://127.0.0.1:${port}/api/shelf`);
+        const shelfData = await shelfRes.json();
+        const bookMeta = shelfData.find((b: any) => b.book_id === bookId && b.volume_id === volumeId);
+        const cachePath = bookMeta.cache_path;
+
+        const chapFile = chapters[activeIdx].file;
+        const chapUrl = `http://127.0.0.1:${port}/api/reader/asset?path=${encodeURIComponent(cachePath + '/OEBPS/Text/' + chapFile)}`;
+        const res = await fetch(chapUrl);
+        const rawText = await res.text();
+
+        // Strip HTML envelopes, headers, stylesheet links to prevent breaks
+        const doc = new DOMParser().parseFromString(rawText, 'text/html');
+        
+        // Re-write image source paths to serve from FastAPI static endpoint
+        const images = doc.getElementsByTagName('img');
+        for (let i = 0; i < images.length; i++) {
+          const src = images[i].getAttribute('src') || '';
+          if (src.includes('../Images/')) {
+            const imgName = src.replace('../Images/', '');
+            const imgFullPath = `${cachePath}/OEBPS/Images/${imgName}`;
+            images[i].setAttribute('src', `http://127.0.0.1:${port}/api/reader/asset?path=${encodeURIComponent(imgFullPath)}`);
+            images[i].setAttribute('class', 'max-w-full my-4 rounded-lg block mx-auto shadow-md');
+          }
+        }
+
+        // Fetch body content
+        const bodyHtml = doc.body.innerHTML;
+        setContent(bodyHtml);
+
+        if (readerRef.current) {
+          readerRef.current.scrollTop = 0;
+        }
+
+        // Persist progress to DB
+        await fetch(`http://127.0.0.1:${port}/api/shelf/progress`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            book_id: bookId,
+            volume_id: volumeId,
+            chapter_index: activeIdx,
+            scroll_position: 0.0
+          })
+        });
+
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    loadChapter();
+  }, [activeIdx, chapters, bookId, volumeId, port]);
+
   return (
-    <div className="p-8">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-xl font-bold">阅读器</h2>
-        <button onClick={onClose} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm text-white">
-          返回书架
-        </button>
+    <div className="h-full w-full flex overflow-hidden">
+      {/* Sidebar Chapters Menu */}
+      {sidebarOpen && (
+        <aside className="w-80 bg-[#161920] border-r border-[#242936] flex flex-col overflow-hidden">
+          <div className="p-4 border-b border-[#242936] flex justify-between items-center">
+            <span className="font-semibold text-sm">目录</span>
+            <span className="text-xs text-gray-500">{chapters.length} 章节</span>
+          </div>
+          <div className="flex-1 overflow-y-auto p-2 space-y-1">
+            {chapters.map((chap, i) => (
+              <button 
+                key={i} onClick={() => setActiveIdx(i)}
+                className={`w-full text-left p-2 rounded-lg text-xs truncate transition-all ${activeIdx === i ? 'bg-[#ff7233]/20 text-[#ff7233]' : 'text-gray-400 hover:bg-[#242936] hover:text-gray-200'}`}
+              >
+                {chap.title}
+              </button>
+            ))}
+          </div>
+        </aside>
+      )}
+
+      {/* Reading Pane */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Header controls */}
+        <header className="h-14 border-b border-[#242936] bg-[#11131a] px-4 flex justify-between items-center z-10">
+          <div className="flex items-center gap-3">
+            <button onClick={onClose} className="p-2 hover:bg-[#242936] rounded-lg text-gray-400 hover:text-gray-200 transition-all">
+              <ArrowLeft size={18} />
+            </button>
+            <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2 hover:bg-[#242936] rounded-lg text-gray-400 hover:text-gray-200 transition-all">
+              <Menu size={18} />
+            </button>
+            {chapters.length > 0 && <span className="text-sm font-medium">{chapters[activeIdx].title}</span>}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button onClick={() => setFontSize(Math.max(12, fontSize - 2))} className="p-2 hover:bg-[#242936] rounded-lg text-gray-400 hover:text-gray-200 transition-all">
+              <ZoomOut size={16} />
+            </button>
+            <span className="text-xs text-gray-400 select-none">{fontSize}px</span>
+            <button onClick={() => setFontSize(Math.min(30, fontSize + 2))} className="p-2 hover:bg-[#242936] rounded-lg text-gray-400 hover:text-gray-200 transition-all">
+              <ZoomIn size={16} />
+            </button>
+          </div>
+        </header>
+
+        {/* Core Text container */}
+        <div 
+          ref={readerRef}
+          className="flex-1 overflow-y-auto p-12 max-w-4xl mx-auto w-full"
+          style={{ fontSize: `${fontSize}px`, lineHeight: 1.8 }}
+        >
+          <div 
+            className="text-gray-300 select-text space-y-4 reader-content"
+            dangerouslySetInnerHTML={{ __html: content }}
+          />
+          
+          {/* Pagination footer */}
+          <div className="flex justify-between items-center mt-12 pt-6 border-t border-[#242936] text-xs text-gray-500">
+            <button 
+              disabled={activeIdx === 0} onClick={() => setActiveIdx(prev => prev - 1)}
+              className="px-4 py-2 bg-[#161920] border border-[#242936] rounded-lg hover:border-[#ff7233] disabled:opacity-50 disabled:hover:border-[#242936]"
+            >
+              上一章
+            </button>
+            <span>{activeIdx + 1} / {chapters.length}</span>
+            <button 
+              disabled={activeIdx === chapters.length - 1} onClick={() => setActiveIdx(prev => prev + 1)}
+              className="px-4 py-2 bg-[#161920] border border-[#242936] rounded-lg hover:border-[#ff7233] disabled:opacity-50 disabled:hover:border-[#242936]"
+            >
+              下一章
+            </button>
+          </div>
+        </div>
       </div>
-      <p className="text-gray-400">正在阅读书籍: {bookId}, 卷号: {volumeId}. 后台API端口: {port}</p>
     </div>
   );
 }
