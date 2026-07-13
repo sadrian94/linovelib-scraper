@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, ZoomIn, ZoomOut, Menu } from 'lucide-react';
+import { translations, Language } from '../utils/i18n';
 
 interface ReaderProps {
   bookId: string;
   volumeId: number;
   port: number;
+  language: Language;
   onClose: () => void;
 }
 
@@ -13,7 +15,7 @@ interface Chapter {
   file: string;
 }
 
-export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps) {
+export default function Reader({ bookId, volumeId, port, language, onClose }: ReaderProps) {
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [activeIdx, setActiveIdx] = useState(0);
   const [content, setContent] = useState('');
@@ -26,6 +28,8 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
   const savedScrollPositionRef = useRef(0.0);
   const isInitialLoad = useRef(true);
   const isRestoringScroll = useRef(false);
+
+  const t = (key: string) => translations[language]?.[key] || key;
 
   const restoreScroll = (scrollRatio: number) => {
     if (!readerRef.current) return;
@@ -241,8 +245,8 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
       {sidebarOpen && (
         <aside className="w-80 bg-[#161920] border-r border-[#242936] flex flex-col overflow-hidden">
           <div className="p-4 border-b border-[#242936] flex justify-between items-center">
-            <span className="font-semibold text-sm">目录</span>
-            <span className="text-xs text-gray-500">{chapters.length} 章节</span>
+            <span className="font-semibold text-sm">{t('tableOfContents')}</span>
+            <span className="text-xs text-gray-500">{chapters.length} {t('chaptersCount')}</span>
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
             {chapters.map((chap, i) => (
@@ -300,14 +304,14 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
               disabled={activeIdx === 0} onClick={() => setActiveIdx(prev => prev - 1)}
               className="px-4 py-2 bg-[#161920] border border-[#242936] rounded-lg hover:border-[#ff7233] disabled:opacity-50 disabled:hover:border-[#242936]"
             >
-              上一章
+              {t('prevChapter')}
             </button>
             <span>{activeIdx + 1} / {chapters.length}</span>
             <button 
               disabled={activeIdx === chapters.length - 1} onClick={() => setActiveIdx(prev => prev + 1)}
               className="px-4 py-2 bg-[#161920] border border-[#242936] rounded-lg hover:border-[#ff7233] disabled:opacity-50 disabled:hover:border-[#242936]"
             >
-              下一章
+              {t('nextChapter')}
             </button>
           </div>
         </div>

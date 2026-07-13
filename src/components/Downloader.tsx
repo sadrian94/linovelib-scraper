@@ -1,6 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
+import { translations, Language } from '../utils/i18n';
 
-export default function Downloader({ port }: { port: number }) {
+interface DownloaderProps {
+  port: number;
+  language: Language;
+}
+
+export default function Downloader({ port, language }: DownloaderProps) {
   const [bookId, setBookId] = useState('');
   const [volumeId, setVolumeId] = useState('');
   const [logs, setLogs] = useState<string[]>([]);
@@ -12,6 +18,8 @@ export default function Downloader({ port }: { port: number }) {
 
   const logEndRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
+
+  const t = (key: string) => translations[language]?.[key] || key;
 
   useEffect(() => {
     const mountedRef = { current: true };
@@ -84,7 +92,7 @@ export default function Downloader({ port }: { port: number }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ book_id: bookId, volume_id: volumeId })
       });
-      if (!res.ok) alert("Error starting download");
+      if (!res.ok) alert(t('errorDownload'));
     } catch (e) {
       console.error(e);
     }
@@ -105,22 +113,22 @@ export default function Downloader({ port }: { port: number }) {
 
   return (
     <div className="p-8 h-full flex flex-col">
-      <h2 className="text-xl font-bold mb-6">下载轻小说</h2>
+      <h2 className="text-xl font-bold mb-6">{t('downloaderHeader')}</h2>
       
       {/* Controls Grid */}
       <div className="grid grid-cols-3 gap-4 mb-6 bg-[#161920] border border-[#242936] p-4 rounded-xl">
         <div>
-          <label className="block text-xs text-gray-400 mb-1">书籍 ID</label>
+          <label className="block text-xs text-gray-400 mb-1">{t('bookId')}</label>
           <input 
             type="text" value={bookId} onChange={e => setBookId(e.target.value)}
-            placeholder="例如 2704" className="w-full bg-[#0d0e12] border border-[#242936] rounded-lg p-2 text-sm focus:outline-none focus:border-[#ff7233]"
+            placeholder={t('bookIdPlaceholder')} className="w-full bg-[#0d0e12] border border-[#242936] rounded-lg p-2 text-sm focus:outline-none focus:border-[#ff7233]"
           />
         </div>
         <div>
-          <label className="block text-xs text-gray-400 mb-1">卷号 (選填，多卷以 - 或逗號分隔)</label>
+          <label className="block text-xs text-gray-400 mb-1">{t('volumeId')}</label>
           <input 
             type="text" value={volumeId} onChange={e => setVolumeId(e.target.value)}
-            placeholder="空代表列出目录, 1-3 代表1至3卷" className="w-full bg-[#0d0e12] border border-[#242936] rounded-lg p-2 text-sm focus:outline-none focus:border-[#ff7233]"
+            placeholder={t('volumeIdPlaceholder')} className="w-full bg-[#0d0e12] border border-[#242936] rounded-lg p-2 text-sm focus:outline-none focus:border-[#ff7233]"
           />
         </div>
         <div className="flex items-end">
@@ -128,7 +136,7 @@ export default function Downloader({ port }: { port: number }) {
             onClick={handleDownload} disabled={status === 'downloading' || status === 'input_required'}
             className="w-full bg-[#ff7233] hover:bg-[#e05e26] disabled:bg-gray-700 text-black font-semibold rounded-lg p-2 text-sm transition-all"
           >
-            {status === 'downloading' ? '下载中...' : '开始下载'}
+            {status === 'downloading' ? t('downloading') : t('startDownload')}
           </button>
         </div>
       </div>
@@ -152,7 +160,7 @@ export default function Downloader({ port }: { port: number }) {
       {status === 'input_required' && (
         <div className="absolute inset-0 bg-black/60 flex items-center justify-center p-4">
           <div className="bg-[#161920] border border-[#242936] p-6 rounded-xl w-96 max-w-full">
-            <h3 className="font-semibold mb-2">需要手动输入</h3>
+            <h3 className="font-semibold mb-2">{t('manualInputRequired')}</h3>
             <p className="text-sm text-gray-400 mb-4">{inputPrompt}</p>
 
             {inputOptions.length > 0 ? (
@@ -160,7 +168,7 @@ export default function Downloader({ port }: { port: number }) {
                 value={submitVal} onChange={e => setSubmitVal(e.target.value)}
                 className="w-full bg-[#0d0e12] border border-[#242936] rounded-lg p-2 text-sm focus:outline-none mb-4"
               >
-                <option value="">-- 请选择 --</option>
+                <option value="">{t('pleaseSelect')}</option>
                 {inputOptions.map((opt, i) => <option key={i} value={opt}>{opt}</option>)}
               </select>
             ) : (
@@ -174,7 +182,7 @@ export default function Downloader({ port }: { port: number }) {
               onClick={handleSubmitInput}
               className="w-full bg-[#ff7233] hover:bg-[#e05e26] text-black font-semibold rounded-lg p-2 text-sm"
             >
-              确定
+              {t('submit')}
             </button>
           </div>
         </div>

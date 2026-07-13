@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Trash2, BookOpen } from 'lucide-react';
+import { translations, Language } from '../utils/i18n';
 
 interface Book {
   book_id: string;
@@ -14,9 +15,17 @@ interface Book {
   download_date: string;
 }
 
-export default function Shelf({ port, onRead }: { port: number, onRead: (b: string, v: number) => void }) {
+interface ShelfProps {
+  port: number;
+  language: Language;
+  onRead: (b: string, v: number) => void;
+}
+
+export default function Shelf({ port, language, onRead }: ShelfProps) {
   const [books, setBooks] = useState<Book[]>([]);
   const [search, setSearch] = useState('');
+
+  const t = (key: string) => translations[language]?.[key] || key;
 
   const fetchBooks = async () => {
     try {
@@ -33,7 +42,7 @@ export default function Shelf({ port, onRead }: { port: number, onRead: (b: stri
   }, [port]);
 
   const handleDelete = async (bId: string, vId: number) => {
-    if (!confirm("确定要删除这本小说及本地文件吗？")) return;
+    if (!confirm(t('deleteConfirm'))) return;
     try {
       await fetch(`http://127.0.0.1:${port}/api/shelf/${bId}/${vId}`, { method: 'DELETE' });
       fetchBooks();
@@ -50,9 +59,9 @@ export default function Shelf({ port, onRead }: { port: number, onRead: (b: stri
   return (
     <div className="p-8 h-full flex flex-col overflow-hidden">
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-xl font-bold">本地书架</h2>
+        <h2 className="text-xl font-bold">{t('shelfHeader')}</h2>
         <input 
-          type="text" placeholder="搜索书名或作者..." value={search} onChange={e => setSearch(e.target.value)}
+          type="text" placeholder={t('searchPlaceholder')} value={search} onChange={e => setSearch(e.target.value)}
           className="bg-[#161920] border border-[#242936] rounded-lg p-2 text-sm w-64 focus:outline-none focus:border-[#ff7233]"
         />
       </div>
@@ -60,7 +69,7 @@ export default function Shelf({ port, onRead }: { port: number, onRead: (b: stri
       {/* Shelf Grid */}
       <div className="flex-1 overflow-y-auto pr-2">
         {filtered.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-gray-500 text-sm">书架空空如也，快去下载一本小说吧！</div>
+          <div className="h-full flex items-center justify-center text-gray-500 text-sm">{t('emptyShelf')}</div>
         ) : (
           <div className="grid grid-cols-4 gap-6">
             {filtered.map(book => (
@@ -73,13 +82,13 @@ export default function Shelf({ port, onRead }: { port: number, onRead: (b: stri
                   <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
                     <button 
                       onClick={() => onRead(book.book_id, book.volume_id)}
-                      className="p-2 bg-[#ff7233] text-black rounded-full hover:scale-110 transition-transform" title="在线阅读"
+                      className="p-2 bg-[#ff7233] text-black rounded-full hover:scale-110 transition-transform" title={t('readOnline')}
                     >
                       <BookOpen size={20} />
                     </button>
                     <button 
                       onClick={() => handleDelete(book.book_id, book.volume_id)}
-                      className="p-2 bg-red-600 text-white rounded-full hover:scale-110 transition-transform" title="删除"
+                      className="p-2 bg-red-600 text-white rounded-full hover:scale-110 transition-transform" title={t('delete')}
                     >
                       <Trash2 size={20} />
                     </button>

@@ -1,13 +1,24 @@
 import { useState, useEffect } from 'react';
+import { translations, Language } from '../utils/i18n';
 
-export default function Settings({ port }: { port: number }) {
+interface SettingsProps {
+  port: number;
+  language: Language;
+  onLanguageChange: (lang: Language) => void;
+}
+
+export default function Settings({ port, language, onLanguageChange }: SettingsProps) {
   const [cfg, setCfg] = useState({
     download_path: './out',
     theme: 'Dark',
     interval: '500',
     numthread: '4',
-    headless_mode: 'True'
+    headless_mode: 'True',
+    app_language: 'zh-TW',
+    conversion_mode: 'traditional'
   });
+
+  const t = (key: string) => translations[language]?.[key] || key;
 
   useEffect(() => {
     fetch(`http://127.0.0.1:${port}/api/config`)
@@ -23,20 +34,23 @@ export default function Settings({ port }: { port: number }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(cfg)
       });
-      if (res.ok) alert("设置保存成功");
+      if (res.ok) {
+        alert(t('saveSuccess'));
+        onLanguageChange(cfg.app_language as Language);
+      }
     } catch (e) {
       console.error(e);
     }
   };
 
   return (
-    <div className="p-8 h-full max-w-xl flex flex-col justify-between">
-      <div>
-        <h2 className="text-xl font-bold mb-6">软件设置</h2>
+    <div className="p-8 h-full max-w-xl flex flex-col justify-between overflow-y-auto">
+      <div className="space-y-6">
+        <h2 className="text-xl font-bold">{t('settingsHeader')}</h2>
 
         <div className="space-y-4">
           <div>
-            <label className="block text-sm text-gray-400 mb-1">下载保存路径</label>
+            <label className="block text-sm text-gray-400 mb-1">{t('downloadPath')}</label>
             <input 
               type="text" value={cfg.download_path} onChange={e => setCfg({ ...cfg, download_path: e.target.value })}
               className="w-full bg-[#161920] border border-[#242936] rounded-lg p-2 text-sm focus:outline-none focus:border-[#ff7233]"
@@ -45,14 +59,14 @@ export default function Settings({ port }: { port: number }) {
           
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm text-gray-400 mb-1">下载间隔 (毫秒)</label>
+              <label className="block text-sm text-gray-400 mb-1">{t('downloadInterval')}</label>
               <input 
                 type="number" value={cfg.interval} onChange={e => setCfg({ ...cfg, interval: e.target.value })}
                 className="w-full bg-[#161920] border border-[#242936] rounded-lg p-2 text-sm focus:outline-none focus:border-[#ff7233]"
               />
             </div>
             <div>
-              <label className="block text-sm text-gray-400 mb-1">最大下载线程</label>
+              <label className="block text-sm text-gray-400 mb-1">{t('maxThreads')}</label>
               <input 
                 type="number" value={cfg.numthread} onChange={e => setCfg({ ...cfg, numthread: e.target.value })}
                 className="w-full bg-[#161920] border border-[#242936] rounded-lg p-2 text-sm focus:outline-none focus:border-[#ff7233]"
@@ -61,23 +75,48 @@ export default function Settings({ port }: { port: number }) {
           </div>
 
           <div>
-            <label className="block text-sm text-gray-400 mb-1">无头浏览器运行 (Headless)</label>
+            <label className="block text-sm text-gray-400 mb-1">{t('headlessMode')}</label>
             <select 
               value={cfg.headless_mode} onChange={e => setCfg({ ...cfg, headless_mode: e.target.value })}
               className="w-full bg-[#161920] border border-[#242936] rounded-lg p-2 text-sm focus:outline-none focus:border-[#ff7233]"
             >
-              <option value="True">开启 (背景运行)</option>
-              <option value="False">关闭 (彈出視窗以手動破防)</option>
+              <option value="True">{t('headlessEnabled')}</option>
+              <option value="False">{t('headlessDisabled')}</option>
             </select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">{t('appLanguage')}</label>
+              <select 
+                value={cfg.app_language} onChange={e => setCfg({ ...cfg, app_language: e.target.value })}
+                className="w-full bg-[#161920] border border-[#242936] rounded-lg p-2 text-sm focus:outline-none focus:border-[#ff7233]"
+              >
+                <option value="zh-TW">繁體中文</option>
+                <option value="zh-CN">简体中文</option>
+                <option value="en">English</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">{t('novelFontConversion')}</label>
+              <select 
+                value={cfg.conversion_mode} onChange={e => setCfg({ ...cfg, conversion_mode: e.target.value })}
+                className="w-full bg-[#161920] border border-[#242936] rounded-lg p-2 text-sm focus:outline-none focus:border-[#ff7233]"
+              >
+                <option value="none">{t('fontNone')}</option>
+                <option value="traditional">{t('fontTraditional')}</option>
+                <option value="simplified">{t('fontSimplified')}</option>
+              </select>
+            </div>
           </div>
         </div>
       </div>
 
       <button 
         onClick={handleSave}
-        className="w-full bg-[#ff7233] hover:bg-[#e05e26] text-black font-semibold rounded-lg p-3 text-sm transition-all"
+        className="w-full bg-[#ff7233] hover:bg-[#e05e26] text-black font-semibold rounded-lg p-3 text-sm transition-all mt-6"
       >
-        保存设置
+        {t('saveSettings')}
       </button>
     </div>
   );
