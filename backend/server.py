@@ -179,7 +179,9 @@ def init_db():
             ("theme", "Dark"),
             ("interval", "500"),
             ("numthread", "4"),
-            ("headless_mode", "True")
+            ("headless_mode", "True"),
+            ("app_language", "zh-TW"),
+            ("conversion_mode", "traditional")
         ]
         for k, v in defaults:
             conn.execute("INSERT OR IGNORE INTO config (KEY, VALUE) VALUES (?, ?)", (k, v))
@@ -214,6 +216,8 @@ class ConfigModel(BaseModel):
     interval: str
     numthread: str
     headless_mode: str
+    app_language: Optional[str] = None
+    conversion_mode: Optional[str] = None
 
 @app.get("/api/config")
 def get_config():

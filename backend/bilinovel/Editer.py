@@ -13,6 +13,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
+import zhconv
 
 import requests
 from bs4 import BeautifulSoup
@@ -83,6 +84,32 @@ class Editer:
         self.max_thread_num = 8
         self.pool = ThreadPoolExecutor(int(num_thread))
 
+    def convert_text(self, text: str) -> str:
+        if not hasattr(self, "conversion_mode"):
+            self.conversion_mode = "traditional"  # Default fallback
+            db_path = Path(__file__).resolve().parent.parent.parent / "bili-config.db"
+            try:
+                import sqlite3
+                conn = sqlite3.connect(str(db_path))
+                cursor = conn.cursor()
+                cursor.execute("SELECT VALUE FROM config WHERE KEY = 'conversion_mode'")
+                row = cursor.fetchone()
+                if row:
+                    self.conversion_mode = row[0]
+                conn.close()
+            except Exception as e:
+                print(f"Error querying conversion_mode from db: {e}")
+
+        if not text:
+            return text
+
+        if self.conversion_mode == "traditional":
+            return zhconv.convert(text, "zh-hant")
+        elif self.conversion_mode == "simplified":
+            return zhconv.convert(text, "zh-hans")
+        else:
+            return text
+
     def get_html(self, url: str, is_gbk: bool = False, is_main_text: bool = False) -> str:
         while True:
             self.tab.get(url)
@@ -148,22 +175,23 @@ class Editer:
 
     def get_meta_data(self, main_html: str) -> None:
         bf = BeautifulSoup(main_html, "html.parser")
-        self.book_name = bf.find("meta", {"property": "og:novel:book_name"})["content"]
-        self.author = bf.find("meta", {"property": "og:novel:author"})["content"]
+        self.book_name_raw = bf.find("meta", {"property": "og:novel:book_name"})["content"]
+        self.book_name = self.convert_text(self.book_name_raw)
+        self.author = self.convert_text(bf.find("meta", {"property": "og:novel:author"})["content"])
 
         brief = bf.find("div", {"class": "book-dec Jbook-dec"})
         brief_to_delete = brief.find("div")
         if brief_to_delete is not None:
             brief_to_delete.extract()
-        self.brief = brief.find_all("p")[0].text
+        self.brief = self.convert_text(brief.find_all("p")[0].text)
 
         book_meta = bf.find("div", class_="book-label")
-        self.publisher = book_meta.find("a", class_="label").text
+        self.publisher = self.convert_text(book_meta.find("a", class_="label").text)
         span_tag = book_meta.find("span")
         self.tag_list = []
         if span_tag:
             for a_tag in span_tag.find_all("a"):
-                self.tag_list.append(a_tag.text)
+                self.tag_list.append(self.convert_text(a_tag.text))
 
         try:
             self.cover_url_back = re.search(
@@ -188,11 +216,12 @@ class Editer:
         chap_html = chap_html_list[volume_array]
 
         volume_name = chap_html.find("h2", {"class": "v-line"}).text
+        volume_name = volume_name.replace(f"{self.book_name_raw} ", "")
         volume_name = volume_name.replace(f"{self.book_name} ", "")
-        self.volume["volume_name"] = volume_name
+        self.volume["volume_name"] = self.convert_text(volume_name)
         chap_list = chap_html.find_all("li", {"class", "col-4"})
         for chap_html in chap_list:
-            self.volume["chap_names"].append(chap_html.text)
+            self.volume["chap_names"].append(self.convert_text(chap_html.text))
             self.volume["chap_urls"].append(
                 self.url_head + chap_html.find("a").get("href")
             )
@@ -312,6 +341,7 @@ class Editer:
             text, next_chap_url = self.get_chap_text(
                 chap_url, chap_name, return_next_chapter=is_fix_next_chap_url
             )
+            text = self.convert_text(text)
 
             if chap_name == self.color_chap_name:
                 text_html_color = text2htmls(self.color_page_name, text)
@@ -369,6 +399,8 @@ class Editer:
         )
 
     def check_volume(self, is_gui: bool = False, signal=None, editline=None) -> None:
+        self.color_chap_name = self.convert_text(self.color_chap_name)
+        self.color_page_name = self.convert_text(self.color_page_name)
         chap_names = self.volume["chap_names"]
         chap_num = len(self.volume["chap_names"])
         for chap_no, url in enumerate(self.volume["chap_urls"]):
@@ -382,9 +414,9 @@ class Editer:
                         self.missing_last_chap_list.append(chap_names[chap_no - 1])
 
         if self.color_chap_name not in self.volume["chap_names"]:
-            self.color_chap_name = self.hand_in_color_page_name(
+            self.color_chap_name = self.convert_text(self.hand_in_color_page_name(
                 is_gui, signal, editline
-            )
+            ))
         self.volume["color_chap_name"] = self.color_chap_name
 
         if self.color_chap_name == "":
