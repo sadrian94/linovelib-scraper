@@ -1,0 +1,8 @@
+# pip install -r requirements.txt
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+rich>=13.7.0
+pyqt5>=5.15.9
+PyQt-Fluent-Widgets[full]>=1.5.0
+pillow-avif-plugin>=1.4.0
+DrissionPage>=4.1.0
