@@ -99,8 +99,9 @@ class DownloadSession:
             return True
 
     def request_input(self, prompt: str, options: list = []) -> str:
-        self.input_needed_prompt = prompt
-        self.input_options = options
+        with self.lock:
+            self.input_needed_prompt = prompt
+            self.input_options = options
         self.set_status("input_required")
         self.broadcast({
             "type": "input_prompt", 
@@ -110,8 +111,8 @@ class DownloadSession:
         self.input_received_event.clear()
         self.input_value = ""
         # Block calling thread until submit_input REST endpoint releases it
-        success = self.input_received_event.wait(timeout=300)
-        if not success:
+        self.input_received_event.wait(timeout=300)
+        if not self.input_received_event.is_set():
             self.set_status("failed")
             self.write_log("Input prompt timed out.")
             raise RuntimeError("Input timed out")
@@ -270,12 +271,14 @@ def delete_book(book_id: str, volume_id: int):
             try:
                 if epub:
                     epub_path = Path(epub).resolve()
-                    if epub_path.is_relative_to(workspace_path) or epub_path.is_relative_to(dl_path):
+                    if (epub_path.is_relative_to(workspace_path) and epub_path != workspace_path) or \
+                       (epub_path.is_relative_to(dl_path) and epub_path != dl_path):
                         if epub_path.is_file():
                             os.remove(str(epub_path))
                 if cache:
                     cache_path = Path(cache).resolve()
-                    if cache_path.is_relative_to(workspace_path) or cache_path.is_relative_to(dl_path):
+                    if (cache_path.is_relative_to(workspace_path) and cache_path != workspace_path) or \
+                       (cache_path.is_relative_to(dl_path) and cache_path != dl_path):
                         if cache_path.is_dir():
                             import shutil
                             shutil.rmtree(str(cache_path))
@@ -371,7 +374,8 @@ class InputSubmission(BaseModel):
 
 @app.post("/api/download/submit_input")
 def submit_input(submission: InputSubmission):
-    if session.status != "input_required":
+    state = session.get_state_snapshot()
+    if state["status"] != "input_required":
         raise HTTPException(status_code=400, detail="No input is required at this time")
     session.input_value = submission.value
     session.set_status("downloading")
