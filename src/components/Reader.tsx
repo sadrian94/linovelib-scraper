@@ -29,10 +29,12 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
 
   const restoreScroll = (scrollRatio: number) => {
     if (!readerRef.current) return;
-    const targetScroll = Math.round(scrollRatio * readerRef.current.scrollHeight);
-    if (Math.abs(readerRef.current.scrollTop - targetScroll) > 1) {
+    const container = readerRef.current;
+    const maxScroll = container.scrollHeight - container.clientHeight;
+    const targetScroll = Math.max(0, Math.min(maxScroll, Math.round(scrollRatio * container.scrollHeight)));
+    if (Math.abs(container.scrollTop - targetScroll) > 1) {
       isRestoringScroll.current = true;
-      readerRef.current.scrollTop = targetScroll;
+      container.scrollTop = targetScroll;
     }
   };
 
@@ -140,6 +142,19 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
             const imgFullPath = `${cachePath}/OEBPS/Images/${imgName}`;
             images[i].setAttribute('src', `http://127.0.0.1:${port}/api/reader/asset?path=${encodeURIComponent(imgFullPath)}`);
             images[i].setAttribute('class', 'max-w-full my-4 rounded-lg block mx-auto shadow-md');
+          }
+        }
+
+        // Re-write SVG image source paths
+        const svgImages = doc.getElementsByTagName('image');
+        for (let i = 0; i < svgImages.length; i++) {
+          const href = svgImages[i].getAttribute('xlink:href') || svgImages[i].getAttribute('href') || '';
+          if (href.includes('../Images/')) {
+            const imgName = href.replace('../Images/', '');
+            const imgFullPath = `${cachePath}/OEBPS/Images/${imgName}`;
+            const rewrittenUrl = `http://127.0.0.1:${port}/api/reader/asset?path=${encodeURIComponent(imgFullPath)}`;
+            svgImages[i].setAttribute('xlink:href', rewrittenUrl);
+            svgImages[i].setAttribute('href', rewrittenUrl);
           }
         }
 
