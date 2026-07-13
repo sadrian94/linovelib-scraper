@@ -227,14 +227,44 @@ class DownloadRequest(BaseModel):
     book_id: str
     volume_id: str
 
+class MockEditLine:
+    def __init__(self):
+        self._is_hidden = True
+        self._text = ""
+        self.options = []
+
+    def isHidden(self):
+        return self._is_hidden
+
+    def text(self):
+        return self._text
+
+    def clear(self):
+        self._text = ""
+        self.options = []
+
+    def addItems(self, items):
+        self.options = list(items)
+
+    def setCurrentIndex(self, idx):
+        pass
+
 class MockSignal:
-    def __init__(self, name=""):
+    def __init__(self, name="", edit_line=None):
         self.name = name
+        self.edit_line = edit_line
+
     def emit(self, val):
         if self.name == "progress":
             session.set_progress(val)
+        elif self.name == "hang" and self.edit_line:
+            self.edit_line._is_hidden = False
+            # Wait for user input through WebSocket
+            prompt = session.input_needed_prompt or "请输入所需資訊："
+            user_input = session.request_input(prompt, self.edit_line.options)
+            self.edit_line._text = user_input
+            self.edit_line._is_hidden = True
         elif self.name == "cover":
-            # val is a tuple: (filepath, img_h, img_w)
             session.write_log(f"Cover generated: {val[0]}")
         else:
             session.write_log(f"Signal {self.name} emitted: {val}")
@@ -244,17 +274,18 @@ def run_download_thread(book_id: str, volume_id: str, config: dict):
         from backend.bilinovel.bilinovel_router import downloader_router
         session.set_status("downloading")
         session.write_log(f"Starting download for Book: {book_id}, Volume: {volume_id}")
+        edit_line = MockEditLine()
         downloader_router(
             root_path=config.get("download_path", "./out"),
             book_no=book_id,
             volume_no=volume_id,
             interval=int(config.get("interval", 500)),
             num_thread=int(config.get("numthread", 1)),
-            is_gui=True, # Forces custom hang inputs
-            hang_signal=MockSignal("hang"),
+            is_gui=True,
+            hang_signal=MockSignal("hang", edit_line),
             progressring_signal=MockSignal("progress"),
             cover_signal=MockSignal("cover"),
-            edit_line_hang=MockSignal("edit_line")
+            edit_line_hang=edit_line
         )
         session.set_status("completed")
     except Exception as e:
@@ -292,7 +323,7 @@ def submit_input(submission: InputSubmission):
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     session.ws_clients.add(websocket)
-    session.loop = asyncio.get_event_loop()
+    session.loop = asyncio.get_running_loop()
     # Send initial state
     await websocket.send_text(json.dumps({
         "type": "init",

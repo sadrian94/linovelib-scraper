@@ -57,14 +57,30 @@ def create_browser() -> Chromium:
     browser_path = find_browser_path()
     port = _find_free_port(9222)
 
+    # Read headless configuration from DB
+    headless = True
+    try:
+        import sqlite3
+        conn = sqlite3.connect("./bili-config.db")
+        cursor = conn.cursor()
+        cursor.execute("SELECT VALUE FROM config WHERE KEY = 'headless_mode'")
+        row = cursor.fetchone()
+        if row:
+            headless = row[0].strip().lower() == 'true'
+        conn.close()
+    except Exception:
+        pass
+
     co = ChromiumOptions()
     co.set_browser_path(browser_path)
     co.set_argument("--no-first-run")
     co.set_argument("--no-default-browser-check")
     co.set_argument("--disable-features=TranslateUI")
     co.set_argument("--disable-background-networking")
+    if headless:
+        co.set_headless(True)
     co.set_local_port(port)
 
-    print(f"使用浏览器: {browser_path}")
+    print(f"使用浏览器: {browser_path} (Headless: {headless})")
     print(f"调试端口: {port}")
     return Chromium(co)
