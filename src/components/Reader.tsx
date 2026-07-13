@@ -29,8 +29,11 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
 
   const restoreScroll = (scrollRatio: number) => {
     if (!readerRef.current) return;
-    isRestoringScroll.current = true;
-    readerRef.current.scrollTop = scrollRatio * readerRef.current.scrollHeight;
+    const targetScroll = Math.round(scrollRatio * readerRef.current.scrollHeight);
+    if (Math.abs(readerRef.current.scrollTop - targetScroll) > 1) {
+      isRestoringScroll.current = true;
+      readerRef.current.scrollTop = targetScroll;
+    }
   };
 
   const activeIdxRef = useRef(activeIdx);
@@ -88,6 +91,13 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
 
   // Capture image load events to adjust scroll position as height changes dynamically
   useEffect(() => {
+    // Restore initial scroll position after content renders and DOM updates
+    if (readerRef.current && savedScrollPositionRef.current > 0) {
+      restoreScroll(savedScrollPositionRef.current);
+    } else if (readerRef.current) {
+      readerRef.current.scrollTop = 0;
+    }
+
     const handleImageLoad = () => {
       if (readerRef.current && savedScrollPositionRef.current > 0) {
         restoreScroll(savedScrollPositionRef.current);
@@ -136,11 +146,10 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
         const bodyHtml = doc.body.innerHTML;
         setContent(bodyHtml);
 
-        // Restore scroll progress
+        // Update the ref to be restored in the [content] effect
         const savedScroll = isInitialLoad.current ? (bookMeta.reading_progress_scroll || 0.0) : 0.0;
         isInitialLoad.current = false;
         savedScrollPositionRef.current = savedScroll;
-        restoreScroll(savedScroll);
 
         // Save current chapter progress
         await fetch(`http://127.0.0.1:${port}/api/shelf/progress`, {
@@ -168,9 +177,8 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
   // Save final scroll position ONLY on book exit / component unmount
   useEffect(() => {
     return () => {
-      if (readerRef.current && chaptersRef.current.length > 0) {
-        const container = readerRef.current;
-        const position = container.scrollHeight > 0 ? (container.scrollTop / container.scrollHeight) : 0.0;
+      if (chaptersRef.current.length > 0) {
+        const position = savedScrollPositionRef.current;
         fetch(`http://127.0.0.1:${port}/api/shelf/progress`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
