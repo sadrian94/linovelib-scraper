@@ -2,10 +2,33 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Union
 
 from .Editer import Editer
-from backend.router_utils import parse_volume_input
+
+
+def parse_volume_input(volume_no: str) -> Optional[Union[int, list[int]]]:
+    """Parse user volume input into a single int, list of ints, or None (query only)."""
+    if not volume_no:
+        return None
+    if volume_no.isdigit():
+        vol = int(volume_no)
+        if vol <= 0:
+            raise ValueError("Volume number must be positive")
+        return vol
+    if "-" in volume_no:
+        parts = volume_no.split("-")
+        if len(parts) == 2 and all(p.isdigit() for p in parts):
+            start, end = int(parts[0]), int(parts[1])
+            if 0 < start < end:
+                return list(range(start, end + 1))
+        raise ValueError("Invalid range format, use e.g. '1-3'")
+    if "," in volume_no:
+        parts = volume_no.split(",")
+        if all(p.strip().isdigit() for p in parts):
+            return [int(p.strip()) for p in parts]
+        raise ValueError("Invalid comma list format, use e.g. '1,2,3'")
+    raise ValueError("Invalid volume input")
 
 
 def query_chaps(book_no: str) -> None:
