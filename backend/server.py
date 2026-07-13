@@ -31,7 +31,7 @@ DB_PATH = Path(__file__).resolve().parent.parent / "bili-config.db"
 def get_db():
     conn = sqlite3.connect(str(DB_PATH))
     try:
-        conn.execute("PRAGMA journal_mode=DELETE")
+        conn.execute("PRAGMA journal_mode=WAL")
         yield conn
     finally:
         conn.close()
@@ -102,25 +102,34 @@ class DownloadSession:
         with self.lock:
             self.input_needed_prompt = prompt
             self.input_options = options
+            self.input_received_event.clear()
+            self.input_value = ""
+        
         self.set_status("input_required")
         self.broadcast({
             "type": "input_prompt", 
             "message": prompt, 
             "options": options
         })
-        self.input_received_event.clear()
-        self.input_value = ""
-        # Block calling thread until submit_input REST endpoint releases it
-        self.input_received_event.wait(timeout=300)
-        if not self.input_received_event.is_set():
-            self.set_status("failed")
-            self.write_log("Input prompt timed out.")
-            raise RuntimeError("Input timed out")
-        return self.input_value
+        
+        try:
+            # Block calling thread until submit_input REST endpoint releases it
+            if not self.input_received_event.wait(timeout=300):
+                self.set_status("failed")
+                self.write_log("Input prompt timed out.")
+                raise RuntimeError("Input timed out")
+            return self.input_value
+        finally:
+            with self.lock:
+                self.input_needed_prompt = ""
+                self.input_options = []
 
     def broadcast(self, data: dict):
         if self.loop and self.ws_clients:
-            asyncio.run_coroutine_threadsafe(self._send_ws(data), self.loop)
+            try:
+                asyncio.run_coroutine_threadsafe(self._send_ws(data), self.loop)
+            except Exception:
+                pass
 
     async def _send_ws(self, data: dict):
         msg = json.dumps(data)
@@ -254,12 +263,10 @@ def delete_book(book_id: str, volume_id: int):
         row = cursor.fetchone()
         if row:
             epub, cache = row
-            workspace_path = Path(__file__).resolve().parent.parent
             
             # Load download path config
             dl_path_str = "./out"
             try:
-                # Direct query
                 cursor.execute("SELECT VALUE FROM config WHERE KEY = 'download_path'")
                 db_dl = cursor.fetchone()
                 if db_dl:
@@ -271,14 +278,12 @@ def delete_book(book_id: str, volume_id: int):
             try:
                 if epub:
                     epub_path = Path(epub).resolve()
-                    if (epub_path.is_relative_to(workspace_path) and epub_path != workspace_path) or \
-                       (epub_path.is_relative_to(dl_path) and epub_path != dl_path):
+                    if epub_path.is_relative_to(dl_path) and epub_path != dl_path:
                         if epub_path.is_file():
                             os.remove(str(epub_path))
                 if cache:
                     cache_path = Path(cache).resolve()
-                    if (cache_path.is_relative_to(workspace_path) and cache_path != workspace_path) or \
-                       (cache_path.is_relative_to(dl_path) and cache_path != dl_path):
+                    if cache_path.is_relative_to(dl_path) and cache_path != dl_path:
                         if cache_path.is_dir():
                             import shutil
                             shutil.rmtree(str(cache_path))
@@ -405,14 +410,9 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         session.ws_clients.discard(websocket)
 
-# Static assets routing for reader images and texts
 @app.get("/api/reader/asset")
 def get_reader_asset(path: str):
-    # Resolve requested path
     resolved_path = Path(path).resolve()
-    
-    # Resolve current workspace path & out path
-    workspace_path = Path(__file__).resolve().parent.parent
     
     # Load download_path from DB config if exists, otherwise default to "./out"
     dl_path_str = "./out"
@@ -427,8 +427,8 @@ def get_reader_asset(path: str):
         pass
     dl_path = Path(dl_path_str).resolve()
 
-    # Safety checks
-    if not (resolved_path.is_relative_to(workspace_path) or resolved_path.is_relative_to(dl_path)):
+    # Safety checks: Must be strictly inside dl_path
+    if not (resolved_path.is_relative_to(dl_path) and resolved_path != dl_path):
         raise HTTPException(status_code=403, detail="Access denied")
         
     if not resolved_path.is_file():
