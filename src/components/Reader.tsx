@@ -25,13 +25,30 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
   const lastSaveRef = useRef(0);
   const savedScrollPositionRef = useRef(0.0);
   const isInitialLoad = useRef(true);
+  const isRestoringScroll = useRef(false);
+
+  const restoreScroll = (scrollRatio: number) => {
+    if (!readerRef.current) return;
+    isRestoringScroll.current = true;
+    readerRef.current.scrollTop = scrollRatio * readerRef.current.scrollHeight;
+  };
+
+  const activeIdxRef = useRef(activeIdx);
+  const chaptersRef = useRef(chapters);
+
+  useEffect(() => {
+    activeIdxRef.current = activeIdx;
+    chaptersRef.current = chapters;
+  }, [activeIdx, chapters]);
 
   // Fetch Table of Contents and metadata
   useEffect(() => {
+    let active = true;
     const loadBook = async () => {
       try {
         const shelfRes = await fetch(`http://127.0.0.1:${port}/api/shelf`);
         const shelfData = await shelfRes.json();
+        if (!active) return;
         const meta = shelfData.find((b: any) => b.book_id === bookId && b.volume_id === volumeId);
         if (!meta) return;
         setBookMeta(meta);
@@ -40,6 +57,7 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
         const tocUrl = `http://127.0.0.1:${port}/api/reader/asset?path=${encodeURIComponent(cachePath + '/OEBPS/toc.ncx')}`;
         const tocRes = await fetch(tocUrl);
         const tocText = await tocRes.text();
+        if (!active) return;
 
         const parser = new DOMParser();
         const xmlDoc = parser.parseFromString(tocText, "text/xml");
@@ -53,6 +71,7 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
           chaps.push({ title, file });
         }
 
+        if (!active) return;
         setChapters(chaps);
         const progressChapter = meta.reading_progress_chapter || 0;
         setActiveIdx(progressChapter < chaps.length ? progressChapter : 0);
@@ -62,13 +81,16 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
     };
 
     loadBook();
+    return () => {
+      active = false;
+    };
   }, [bookId, volumeId, port]);
 
   // Capture image load events to adjust scroll position as height changes dynamically
   useEffect(() => {
     const handleImageLoad = () => {
       if (readerRef.current && savedScrollPositionRef.current > 0) {
-        readerRef.current.scrollTop = savedScrollPositionRef.current * readerRef.current.scrollHeight;
+        restoreScroll(savedScrollPositionRef.current);
       }
     };
     const container = readerRef.current;
@@ -118,9 +140,7 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
         const savedScroll = isInitialLoad.current ? (bookMeta.reading_progress_scroll || 0.0) : 0.0;
         isInitialLoad.current = false;
         savedScrollPositionRef.current = savedScroll;
-        if (readerRef.current) {
-          readerRef.current.scrollTop = savedScroll * readerRef.current.scrollHeight;
-        }
+        restoreScroll(savedScroll);
 
         // Save current chapter progress
         await fetch(`http://127.0.0.1:${port}/api/shelf/progress`, {
@@ -145,30 +165,34 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
     };
   }, [activeIdx, chapters, bookMeta, bookId, volumeId, port]);
 
-  // Save final scroll position on unmount or before chapter/book switch
+  // Save final scroll position ONLY on book exit / component unmount
   useEffect(() => {
     return () => {
-      if (readerRef.current && chapters.length > 0) {
+      if (readerRef.current && chaptersRef.current.length > 0) {
         const container = readerRef.current;
-        const position = container.scrollTop / container.scrollHeight;
+        const position = container.scrollHeight > 0 ? (container.scrollTop / container.scrollHeight) : 0.0;
         fetch(`http://127.0.0.1:${port}/api/shelf/progress`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             book_id: bookId,
             volume_id: volumeId,
-            chapter_index: activeIdx,
+            chapter_index: activeIdxRef.current,
             scroll_position: position
           })
         }).catch(console.error);
       }
     };
-  }, [activeIdx, chapters, bookId, volumeId, port]);
+  }, [bookId, volumeId, port]);
 
   const handleScroll = () => {
     if (!readerRef.current || chapters.length === 0) return;
+    if (isRestoringScroll.current) {
+      isRestoringScroll.current = false;
+      return;
+    }
     const container = readerRef.current;
-    const position = container.scrollTop / container.scrollHeight;
+    const position = container.scrollHeight > 0 ? (container.scrollTop / container.scrollHeight) : 0.0;
     
     savedScrollPositionRef.current = position;
     
