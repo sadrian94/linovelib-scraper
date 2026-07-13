@@ -59,11 +59,11 @@ export default function Shelf({ port, language, onRead }: ShelfProps) {
       if (res.ok) {
         fetchBooks();
       } else {
-        alert(translations[language]?.['downloader.error.start'] || "Failed to convert book font");
+        alert(t('shelf.error.convert'));
       }
     } catch (e) {
       console.error(e);
-      alert("Failed to convert book font");
+      alert(t('shelf.error.convert'));
     } finally {
       setConverting(null);
     }
@@ -100,7 +100,8 @@ export default function Shelf({ port, language, onRead }: ShelfProps) {
                   <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
                     <button 
                       onClick={() => onRead(book.book_id, book.volume_id)}
-                      className="p-2 bg-[#ff7233] text-black rounded-full hover:scale-110 transition-transform" title={t('readOnline')}
+                      disabled={converting !== null}
+                      className="p-2 bg-[#ff7233] text-black rounded-full hover:scale-110 transition-transform disabled:opacity-50 disabled:hover:scale-100" title={t('readOnline')}
                     >
                       <BookOpen size={20} />
                     </button>
@@ -118,7 +119,8 @@ export default function Shelf({ port, language, onRead }: ShelfProps) {
                       </button>
                     <button 
                       onClick={() => handleDelete(book.book_id, book.volume_id)}
-                      className="p-2 bg-red-600 text-white rounded-full hover:scale-110 transition-transform" title={t('delete')}
+                      disabled={converting !== null}
+                      className="p-2 bg-red-600 text-white rounded-full hover:scale-110 transition-transform disabled:opacity-50 disabled:hover:scale-100" title={t('delete')}
                     >
                       <Trash2 size={20} />
                     </button>

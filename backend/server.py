@@ -536,6 +536,7 @@ def convert_shelf_book(book_id: str, volume_id: int):
                         file_path.write_text(converted_content, encoding="utf-8")
                     except Exception as e:
                         print(f"Error converting file {file_path}: {e}")
+                        raise HTTPException(status_code=500, detail=f"Failed to convert file {file}: {e}")
                         
         # 5. Recreate/re-zip the .epub file using the converted cache path files
         # (mimetype and container.xml should be preserved)
@@ -580,10 +581,8 @@ def convert_shelf_book(book_id: str, volume_id: int):
                             rel_path = file_path.relative_to(resolved_cache_path)
                             zf.write(str(file_path), str(rel_path).replace("\\", "/"))
                             
-            # Safely replace the old epub
-            if resolved_epub_path.exists():
-                os.remove(str(resolved_epub_path))
-            os.rename(str(temp_epub_path), str(resolved_epub_path))
+            # Safely replace the old epub atomically
+            os.replace(str(temp_epub_path), str(resolved_epub_path))
         except Exception as e:
             if temp_epub_path.exists():
                 try:
