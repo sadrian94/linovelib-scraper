@@ -39,12 +39,14 @@ fn main() {
         .invoke_handler(tauri::generate_handler![get_server_port])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
-                // Kill python backend when closing app
-                let state: State<'_, ServerProcess> = window.state();
-                let mut child_lock = state.child.lock().unwrap();
-                if let Some(mut child) = child_lock.take() {
-                    let _ = child.kill();
-                    println!("Killed Python backend server.");
+                if window.label() == "main" {
+                    // Kill python backend when closing main window
+                    let state: State<'_, ServerProcess> = window.state();
+                    let mut child_lock = state.child.lock().unwrap();
+                    if let Some(mut child) = child_lock.take() {
+                        let _ = child.kill();
+                        println!("Killed Python backend server.");
+                    }
                 }
             }
         })
