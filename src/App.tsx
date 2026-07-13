@@ -54,7 +54,13 @@ export default function App() {
       {/* Main Content Area */}
       <main className="flex-1 bg-[#0d0e12] overflow-hidden relative">
         {activeReading ? (
-          <Reader bookId={activeReading.bookId} volumeId={activeReading.volumeId} port={port} onClose={() => setActiveReading(null)} />
+          <Reader 
+            key={`${activeReading.bookId}-${activeReading.volumeId}`}
+            bookId={activeReading.bookId} 
+            volumeId={activeReading.volumeId} 
+            port={port} 
+            onClose={() => setActiveReading(null)} 
+          />
         ) : (
           <>
             {tab === 'downloader' && <Downloader port={port} />}

@@ -21,6 +21,8 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const readerRef = useRef<HTMLDivElement>(null);
+  const lastSaveRef = useRef(0);
+  const isFirstLoadRef = useRef(true);
 
   // Fetch Table of Contents and metadata
   useEffect(() => {
@@ -69,6 +71,7 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
   // Load active chapter content
   useEffect(() => {
     if (chapters.length === 0) return;
+    let active = true;
     const loadChapter = async () => {
       try {
         const shelfRes = await fetch(`http://127.0.0.1:${port}/api/shelf`);
@@ -80,6 +83,8 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
         const chapUrl = `http://127.0.0.1:${port}/api/reader/asset?path=${encodeURIComponent(cachePath + '/OEBPS/Text/' + chapFile)}`;
         const res = await fetch(chapUrl);
         const rawText = await res.text();
+
+        if (!active) return;
 
         // Strip HTML envelopes, headers, stylesheet links to prevent breaks
         const doc = new DOMParser().parseFromString(rawText, 'text/html');
@@ -96,15 +101,19 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
           }
         }
 
-        // Fetch body content
         const bodyHtml = doc.body.innerHTML;
         setContent(bodyHtml);
 
-        if (readerRef.current) {
-          readerRef.current.scrollTop = 0;
-        }
+        // Restore scroll progress
+        const savedScroll = isFirstLoadRef.current ? (bookMeta.reading_progress_scroll || 0.0) : 0.0;
+        isFirstLoadRef.current = false;
+        setTimeout(() => {
+          if (active && readerRef.current) {
+            readerRef.current.scrollTop = savedScroll * readerRef.current.scrollHeight;
+          }
+        }, 100);
 
-        // Persist progress to DB
+        // Save current chapter progress
         await fetch(`http://127.0.0.1:${port}/api/shelf/progress`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -112,7 +121,7 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
             book_id: bookId,
             volume_id: volumeId,
             chapter_index: activeIdx,
-            scroll_position: 0.0
+            scroll_position: savedScroll
           })
         });
 
@@ -122,7 +131,31 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
     };
 
     loadChapter();
+    return () => {
+      active = false;
+    };
   }, [activeIdx, chapters, bookId, volumeId, port]);
+
+  const handleScroll = () => {
+    if (!readerRef.current || chapters.length === 0) return;
+    const container = readerRef.current;
+    const position = container.scrollTop / container.scrollHeight;
+    
+    const now = Date.now();
+    if (now - lastSaveRef.current > 3000) {
+      lastSaveRef.current = now;
+      fetch(`http://127.0.0.1:${port}/api/shelf/progress`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          book_id: bookId,
+          volume_id: volumeId,
+          chapter_index: activeIdx,
+          scroll_position: position
+        })
+      }).catch(console.error);
+    }
+  };
 
   return (
     <div className="h-full w-full flex overflow-hidden">
@@ -174,6 +207,7 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
         {/* Core Text container */}
         <div 
           ref={readerRef}
+          onScroll={handleScroll}
           className="flex-1 overflow-y-auto p-12 max-w-4xl mx-auto w-full"
           style={{ fontSize: `${fontSize}px`, lineHeight: 1.8 }}
         >
