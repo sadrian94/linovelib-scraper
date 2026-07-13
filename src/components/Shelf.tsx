@@ -52,20 +52,18 @@ export default function Shelf({ port, language, onRead }: ShelfProps) {
     }
   };
 
-  const handleConvert = async (bookId: string, volumeId: number) => {
-    const key = `${bookId}_${volumeId}`;
-    setConverting(key);
+  const handleConvert = async (bId: string, vId: number) => {
+    setConverting(`${bId}_${vId}`);
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/api/shelf/convert/${bookId}/${volumeId}`, {
-        method: 'POST'
-      });
+      const res = await fetch(`http://127.0.0.1:${port}/api/shelf/convert/${bId}/${vId}`, { method: 'POST' });
       if (res.ok) {
-        await fetchBooks();
+        fetchBooks();
       } else {
-        console.error('Failed to convert book font');
+        alert(translations[language]?.['downloader.error.start'] || "Failed to convert book font");
       }
     } catch (e) {
       console.error(e);
+      alert("Failed to convert book font");
     } finally {
       setConverting(null);
     }
@@ -106,13 +104,18 @@ export default function Shelf({ port, language, onRead }: ShelfProps) {
                     >
                       <BookOpen size={20} />
                     </button>
-                    <button 
-                      onClick={() => handleConvert(book.book_id, book.volume_id)}
-                      disabled={converting === `${book.book_id}_${book.volume_id}`}
-                      className="p-2 bg-blue-600 text-white rounded-full hover:scale-110 transition-transform disabled:opacity-50 disabled:hover:scale-100" title={t('shelf.tooltip.convert')}
-                    >
-                      <RefreshCw size={20} className={converting === `${book.book_id}_${book.volume_id}` ? 'animate-spin' : ''} />
-                    </button>
+                      <button 
+                        onClick={() => handleConvert(book.book_id, book.volume_id)}
+                        disabled={converting !== null}
+                        className="p-2 bg-[#161920] border border-[#242936] text-white rounded-full hover:scale-110 transition-transform disabled:opacity-50 disabled:hover:scale-100" 
+                        title={t('shelf.tooltip.convert')}
+                      >
+                        {converting === `${book.book_id}_${book.volume_id}` ? (
+                          <RefreshCw size={20} className="animate-spin text-[#ff7233]" />
+                        ) : (
+                          <RefreshCw size={20} />
+                        )}
+                      </button>
                     <button 
                       onClick={() => handleDelete(book.book_id, book.volume_id)}
                       className="p-2 bg-red-600 text-white rounded-full hover:scale-110 transition-transform" title={t('delete')}

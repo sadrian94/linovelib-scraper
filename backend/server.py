@@ -529,7 +529,7 @@ def convert_shelf_book(book_id: str, volume_id: int):
                 # Ensure the resolved file path is inside resolved_cache_path
                 if not file_path.resolve().is_relative_to(resolved_cache_path):
                     continue
-                if file.endswith(('.xhtml', '.opf', '.ncx')):
+                if file.lower().endswith(('.xhtml', '.opf', '.ncx')):
                     try:
                         content = file_path.read_text(encoding="utf-8")
                         converted_content = zhconv.convert(content, locale)
