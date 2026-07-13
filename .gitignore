@@ -35,3 +35,7 @@ config/
 # Temp files
 temp_*/
 tmp/
+
+# Frontend & Rust build artifacts
+node_modules/
+src-tauri/target/
