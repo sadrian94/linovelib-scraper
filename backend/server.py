@@ -60,10 +60,28 @@ class DownloadSession:
         with self.lock:
             return list(self.logs)
 
-    def set_progress(self, val: int):
+    def set_progress(self, val: Any):
         with self.lock:
-            self.progress = val
-        self.broadcast({"type": "progress", "value": val})
+            if val == "start":
+                self.progress = 0
+            elif val == "end":
+                self.progress = 100
+            else:
+                try:
+                    self.progress = int(val)
+                except Exception:
+                    pass
+        self.broadcast({"type": "progress", "value": self.progress})
+
+    def get_state_snapshot(self) -> dict:
+        with self.lock:
+            return {
+                "active": self.active,
+                "progress": self.progress,
+                "status": self.status,
+                "input_prompt": self.input_needed_prompt if self.status == "input_required" else "",
+                "input_options": self.input_options if self.status == "input_required" else []
+            }
 
     def set_status(self, stat: str):
         with self.lock:
@@ -109,7 +127,7 @@ class DownloadSession:
             try:
                 await ws.send_text(msg)
             except Exception:
-                self.ws_clients.remove(ws)
+                self.ws_clients.discard(ws)
 
 session = DownloadSession()
 
@@ -235,12 +253,32 @@ def delete_book(book_id: str, volume_id: int):
         row = cursor.fetchone()
         if row:
             epub, cache = row
+            workspace_path = Path(__file__).resolve().parent.parent
+            
+            # Load download path config
+            dl_path_str = "./out"
             try:
-                if epub and os.path.exists(epub):
-                    os.remove(epub)
-                if cache and os.path.exists(cache):
-                    import shutil
-                    shutil.rmtree(cache)
+                # Direct query
+                cursor.execute("SELECT VALUE FROM config WHERE KEY = 'download_path'")
+                db_dl = cursor.fetchone()
+                if db_dl:
+                    dl_path_str = db_dl[0]
+            except Exception:
+                pass
+            dl_path = Path(dl_path_str).resolve()
+            
+            try:
+                if epub:
+                    epub_path = Path(epub).resolve()
+                    if epub_path.is_relative_to(workspace_path) or epub_path.is_relative_to(dl_path):
+                        if epub_path.is_file():
+                            os.remove(str(epub_path))
+                if cache:
+                    cache_path = Path(cache).resolve()
+                    if cache_path.is_relative_to(workspace_path) or cache_path.is_relative_to(dl_path):
+                        if cache_path.is_dir():
+                            import shutil
+                            shutil.rmtree(str(cache_path))
             except Exception as e:
                 print(f"Error deleting files: {e}")
         conn.execute("DELETE FROM shelf WHERE book_id = ? AND volume_id = ?", (book_id, volume_id))
@@ -347,12 +385,14 @@ async def websocket_endpoint(websocket: WebSocket):
     session.loop = asyncio.get_running_loop()
     try:
         # Send initial state
+        state = session.get_state_snapshot()
         await websocket.send_text(json.dumps({
             "type": "init",
             "logs": session.get_logs_copy(),
-            "progress": session.progress,
-            "status": session.status,
-            "input_prompt": session.input_needed_prompt if session.status == "input_required" else ""
+            "progress": state["progress"],
+            "status": state["status"],
+            "input_prompt": state["input_prompt"],
+            "input_options": state["input_options"]
         }))
         while True:
             await websocket.receive_text()
