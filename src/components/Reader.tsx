@@ -24,6 +24,7 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
   const readerRef = useRef<HTMLDivElement>(null);
   const lastSaveRef = useRef(0);
   const savedScrollPositionRef = useRef(0.0);
+  const isInitialLoad = useRef(true);
 
   // Fetch Table of Contents and metadata
   useEffect(() => {
@@ -88,7 +89,8 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
     const loadChapter = async () => {
       try {
         const cachePath = bookMeta.cache_path;
-        const chapFile = chapters[activeIdx].file;
+        const chapFileRaw = chapters[activeIdx].file;
+        const chapFile = chapFileRaw.split('#')[0];
         const chapUrl = `http://127.0.0.1:${port}/api/reader/asset?path=${encodeURIComponent(cachePath + '/OEBPS/Text/' + chapFile)}`;
         const res = await fetch(chapUrl);
         const rawText = await res.text();
@@ -113,7 +115,8 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
         setContent(bodyHtml);
 
         // Restore scroll progress
-        const savedScroll = bookMeta.reading_progress_scroll || 0.0;
+        const savedScroll = isInitialLoad.current ? (bookMeta.reading_progress_scroll || 0.0) : 0.0;
+        isInitialLoad.current = false;
         savedScrollPositionRef.current = savedScroll;
         if (readerRef.current) {
           readerRef.current.scrollTop = savedScroll * readerRef.current.scrollHeight;
@@ -166,6 +169,8 @@ export default function Reader({ bookId, volumeId, port, onClose }: ReaderProps)
     if (!readerRef.current || chapters.length === 0) return;
     const container = readerRef.current;
     const position = container.scrollTop / container.scrollHeight;
+    
+    savedScrollPositionRef.current = position;
     
     const now = Date.now();
     if (now - lastSaveRef.current > 3000) {
