@@ -27,7 +27,7 @@ Thumbs.db
 
 # Project specific
 *.epub
-bili-config.db
+bili-config.db*
 out/
 config/
 *.log
