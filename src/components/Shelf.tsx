@@ -196,11 +196,18 @@ export default function Shelf({ port, language, onRead }: ShelfProps) {
                         key={volume.volume_id}
                         className="flex items-center justify-between p-4 bg-[#161920] border border-[#242936] hover:border-[#ff7233]/30 rounded-xl transition-all"
                       >
-                        <div className="flex-1 min-w-0 pr-4">
-                          <h4 className="font-semibold text-sm text-white truncate">{volume.volume_name}</h4>
-                          <p className="text-xs text-gray-500 mt-1">
-                            {t('shelf.downloadDate')}: {volume.download_date || 'N/A'}
-                          </p>
+                        <div className="flex items-center flex-1 min-w-0 pr-4 gap-4">
+                          <img 
+                            src={`http://127.0.0.1:${port}/api/reader/asset?path=${encodeURIComponent(volume.cover_path)}`} 
+                            alt={volume.volume_name} 
+                            className="w-10 h-14 object-cover rounded border border-[#242936] bg-gray-900 shadow-sm"
+                          />
+                          <div className="min-w-0">
+                            <h4 className="font-semibold text-sm text-white truncate">{volume.volume_name}</h4>
+                            <p className="text-xs text-gray-500 mt-1">
+                              {t('shelf.downloadDate')}: {volume.download_date || 'N/A'}
+                            </p>
+                          </div>
                         </div>
                         
                         <div className="flex items-center gap-2">

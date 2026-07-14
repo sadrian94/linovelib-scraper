@@ -50,6 +50,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'shelf.volumesCount': '卷',
     'shelf.backToShelf': '返回書架',
     'shelf.downloadDate': '下載日期',
+    'reader.colorPage': '彩頁',
   },
   'zh-CN': {
     appName: '哔哩轻小说',
@@ -100,6 +101,7 @@ export const translations: Record<Language, Record<string, string>> = {
     'shelf.volumesCount': '卷',
     'shelf.backToShelf': '返回书架',
     'shelf.downloadDate': '下载日期',
+    'reader.colorPage': '彩页',
   },
   'en': {
     appName: 'Bilinovel',
@@ -150,5 +152,6 @@ export const translations: Record<Language, Record<string, string>> = {
     'shelf.volumesCount': 'Volumes',
     'shelf.backToShelf': 'Back to Shelf',
     'shelf.downloadDate': 'Downloaded',
+    'reader.colorPage': 'Illustrations',
   }
 };

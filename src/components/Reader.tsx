@@ -73,6 +73,22 @@ export default function Reader({ bookId, volumeId, port, language, onClose }: Re
         const navPoints = xmlDoc.getElementsByTagName("navPoint");
         
         const chaps: Chapter[] = [];
+        
+        // Check if color.xhtml exists and prepend it as the first chapter
+        const colorPath = cachePath + '/OEBPS/Text/color.xhtml';
+        const colorUrl = `http://127.0.0.1:${port}/api/reader/asset?path=${encodeURIComponent(colorPath)}`;
+        try {
+          const colorRes = await fetch(colorUrl, { method: 'HEAD' });
+          if (colorRes.ok && active) {
+            chaps.push({ 
+              title: translations[language]?.['reader.colorPage'] || '彩頁', 
+              file: 'color.xhtml' 
+            });
+          }
+        } catch (e) {
+          console.log("No color.xhtml available:", e);
+        }
+
         for (let i = 0; i < navPoints.length; i++) {
           const title = navPoints[i].getElementsByTagName("text")[0]?.textContent || '';
           const src = navPoints[i].getElementsByTagName("content")[0]?.getAttribute("src") || '';
