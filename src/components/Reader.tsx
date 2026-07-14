@@ -78,7 +78,7 @@ export default function Reader({ bookId, volumeId, port, language, onClose }: Re
         const colorPath = cachePath + '/OEBPS/Text/color.xhtml';
         const colorUrl = `http://127.0.0.1:${port}/api/reader/asset?path=${encodeURIComponent(colorPath)}`;
         try {
-          const colorRes = await fetch(colorUrl, { method: 'HEAD' });
+          const colorRes = await fetch(colorUrl);
           if (colorRes.ok && active) {
             chaps.push({ 
               title: translations[language]?.['reader.colorPage'] || '彩頁', 

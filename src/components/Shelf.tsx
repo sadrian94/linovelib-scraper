@@ -173,30 +173,27 @@ export default function Shelf({ port, language, onRead }: ShelfProps) {
               <h2 className="text-xl font-bold">{t('shelf.backToShelf')}</h2>
             </div>
 
-            <div className="flex-1 flex gap-8 overflow-hidden">
-              {/* Left Panel: Series Info */}
-              <div className="w-1/3 max-w-[280px] flex flex-col gap-4 overflow-y-auto">
-                <div className="relative aspect-[3/4] bg-gray-900 rounded-xl overflow-hidden border border-[#242936] shadow-xl">
-                  <img 
-                    src={`http://127.0.0.1:${port}/api/reader/asset?path=${encodeURIComponent(selectedGroup.cover_path)}`} 
-                    alt={selectedGroup.title} className="w-full h-full object-cover"
-                  />
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-white leading-snug mb-2">{selectedGroup.title}</h3>
-                  <p className="text-sm text-gray-400 truncate">
-                    <span className="text-gray-500 font-medium mr-1">Author:</span>{selectedGroup.author}
-                  </p>
-                  <p className="text-xs text-gray-500 truncate mt-1">
-                    <span className="text-gray-500 font-medium mr-1">Publisher:</span>{selectedGroup.publisher}
-                  </p>
+            <div className="flex-1 flex gap-6 overflow-hidden">
+              {/* Left Panel: Series Info (Narrow, no cover) */}
+              <div className="w-48 flex-shrink-0 flex flex-col gap-4">
+                <div className="bg-[#161920]/60 border border-[#242936] rounded-xl p-4 flex flex-col gap-3">
+                  <h3 className="text-sm font-bold text-white leading-snug">{selectedGroup.title}</h3>
+                  <div className="h-px bg-[#242936]" />
+                  <div>
+                    <p className="text-[10px] text-gray-500 font-medium">Author</p>
+                    <p className="text-xs text-gray-300 font-semibold truncate mt-0.5">{selectedGroup.author}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-gray-500 font-medium">Publisher</p>
+                    <p className="text-xs text-gray-300 truncate mt-0.5">{selectedGroup.publisher}</p>
+                  </div>
                 </div>
               </div>
 
               {/* Right Panel: Volumes List Grid */}
               <div className="flex-1 bg-[#161920]/40 border border-[#242936] rounded-xl flex flex-col overflow-hidden">
-                <div className="flex-1 overflow-y-auto p-4">
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                <div className="flex-1 overflow-y-auto p-6">
+                  <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                     {selectedGroup.volumes.map(volume => {
                       const isConverting = converting === `${volume.book_id}_${volume.volume_id}`;
                       const isAnyConverting = converting !== null;
@@ -206,22 +203,22 @@ export default function Shelf({ port, language, onRead }: ShelfProps) {
                           key={volume.volume_id}
                           className="bg-[#161920] border border-[#242936] hover:border-[#ff7233]/30 rounded-xl p-4 flex flex-col items-center justify-between text-center transition-all duration-200"
                         >
-                          {/* Cover Thumbnail */}
-                          <div className="relative w-24 h-32 bg-gray-900 rounded overflow-hidden shadow-md mb-3 border border-[#242936] flex-shrink-0">
+                          {/* Cover Thumbnail (Larger: w-32 h-44) */}
+                          <div className="relative w-32 h-44 bg-gray-900 rounded-lg overflow-hidden shadow-lg mb-4 border border-[#242936] flex-shrink-0 group/cover">
                             <img 
                               src={`http://127.0.0.1:${port}/api/reader/asset?path=${encodeURIComponent(volume.cover_path)}`} 
                               alt={volume.volume_name} 
-                              className="w-full h-full object-cover"
+                              className="w-full h-full object-cover group-hover/cover:scale-105 transition-transform duration-300"
                             />
                           </div>
 
                           {/* Title and Date */}
                           <div className="w-full mb-3 min-h-[44px] flex flex-col justify-center">
-                            <h4 className="font-semibold text-xs text-white line-clamp-2 px-1" title={volume.volume_name}>
+                            <h4 className="font-semibold text-xs text-white line-clamp-2 px-1 leading-relaxed" title={volume.volume_name}>
                               {volume.volume_name}
                             </h4>
-                            <p className="text-[10px] text-gray-500 mt-1 truncate">
-                              {volume.download_date ? volume.download_date.split(' ')[0] : 'N/A'}
+                            <p className="text-[10px] text-gray-500 mt-1.5 truncate">
+                              {t('shelf.downloadDate')}: {volume.download_date ? volume.download_date.split(' ')[0] : 'N/A'}
                             </p>
                           </div>
 
