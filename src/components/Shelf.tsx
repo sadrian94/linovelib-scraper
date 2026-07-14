@@ -112,7 +112,16 @@ export default function Shelf({ port, language, onRead }: ShelfProps) {
       {selectedBookId === null ? (
         <>
           <div className="flex justify-between items-center mb-6">
-            <h2 className="text-xl font-bold">{t('shelfHeader')}</h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-xl font-bold">{t('shelfHeader')}</h2>
+              <button 
+                onClick={fetchBooks}
+                className="p-1.5 bg-[#161920] border border-[#242936] hover:border-[#ff7233] text-gray-400 hover:text-white rounded-lg transition-colors flex items-center justify-center"
+                title={t('shelf.tooltip.refresh')}
+              >
+                <RefreshCw size={16} />
+              </button>
+            </div>
             <input 
               type="text" placeholder={t('searchPlaceholder')} value={search} onChange={e => setSearch(e.target.value)}
               className="bg-[#161920] border border-[#242936] rounded-lg p-2 text-sm w-64 focus:outline-none focus:border-[#ff7233]"
@@ -184,70 +193,78 @@ export default function Shelf({ port, language, onRead }: ShelfProps) {
                 </div>
               </div>
 
-              {/* Right Panel: Volumes List */}
+              {/* Right Panel: Volumes List Grid */}
               <div className="flex-1 bg-[#161920]/40 border border-[#242936] rounded-xl flex flex-col overflow-hidden">
-                <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                  {selectedGroup.volumes.map(volume => {
-                    const isConverting = converting === `${volume.book_id}_${volume.volume_id}`;
-                    const isAnyConverting = converting !== null;
-                    
-                    return (
-                      <div 
-                        key={volume.volume_id}
-                        className="flex items-center justify-between p-4 bg-[#161920] border border-[#242936] hover:border-[#ff7233]/30 rounded-xl transition-all"
-                      >
-                        <div className="flex items-center flex-1 min-w-0 pr-4 gap-4">
-                          <img 
-                            src={`http://127.0.0.1:${port}/api/reader/asset?path=${encodeURIComponent(volume.cover_path)}`} 
-                            alt={volume.volume_name} 
-                            className="w-10 h-14 object-cover rounded border border-[#242936] bg-gray-900 shadow-sm"
-                          />
-                          <div className="min-w-0">
-                            <h4 className="font-semibold text-sm text-white truncate">{volume.volume_name}</h4>
-                            <p className="text-xs text-gray-500 mt-1">
-                              {t('shelf.downloadDate')}: {volume.download_date || 'N/A'}
+                <div className="flex-1 overflow-y-auto p-4">
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    {selectedGroup.volumes.map(volume => {
+                      const isConverting = converting === `${volume.book_id}_${volume.volume_id}`;
+                      const isAnyConverting = converting !== null;
+                      
+                      return (
+                        <div 
+                          key={volume.volume_id}
+                          className="bg-[#161920] border border-[#242936] hover:border-[#ff7233]/30 rounded-xl p-4 flex flex-col items-center justify-between text-center transition-all duration-200"
+                        >
+                          {/* Cover Thumbnail */}
+                          <div className="relative w-24 h-32 bg-gray-900 rounded overflow-hidden shadow-md mb-3 border border-[#242936] flex-shrink-0">
+                            <img 
+                              src={`http://127.0.0.1:${port}/api/reader/asset?path=${encodeURIComponent(volume.cover_path)}`} 
+                              alt={volume.volume_name} 
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+
+                          {/* Title and Date */}
+                          <div className="w-full mb-3 min-h-[44px] flex flex-col justify-center">
+                            <h4 className="font-semibold text-xs text-white line-clamp-2 px-1" title={volume.volume_name}>
+                              {volume.volume_name}
+                            </h4>
+                            <p className="text-[10px] text-gray-500 mt-1 truncate">
+                              {volume.download_date ? volume.download_date.split(' ')[0] : 'N/A'}
                             </p>
                           </div>
-                        </div>
-                        
-                        <div className="flex items-center gap-2">
-                          {/* Read Online */}
-                          <button
-                            onClick={() => onRead(volume.book_id, volume.volume_id)}
-                            disabled={isAnyConverting}
-                            className="p-2 bg-[#ff7233] text-black rounded-lg hover:scale-105 active:scale-95 transition-transform disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center"
-                            title={t('readOnline')}
-                          >
-                            <BookOpen size={18} />
-                          </button>
 
-                          {/* Convert Font */}
-                          <button
-                            onClick={() => handleConvert(volume.book_id, volume.volume_id)}
-                            disabled={isAnyConverting}
-                            className="p-2 bg-[#242936] border border-[#2d3342] text-white rounded-lg hover:scale-105 active:scale-95 transition-transform disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center"
-                            title={t('shelf.tooltip.convert')}
-                          >
-                            {isConverting ? (
-                              <RefreshCw size={18} className="animate-spin text-[#ff7233]" />
-                            ) : (
-                              <RefreshCw size={18} />
-                            )}
-                          </button>
+                          {/* Actions */}
+                          <div className="flex items-center gap-2 justify-center w-full mt-auto">
+                            {/* Read Online */}
+                            <button
+                              onClick={() => onRead(volume.book_id, volume.volume_id)}
+                              disabled={isAnyConverting}
+                              className="p-2 bg-[#ff7233] text-black rounded-lg hover:scale-105 active:scale-95 transition-transform disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center flex-1"
+                              title={t('readOnline')}
+                            >
+                              <BookOpen size={16} />
+                            </button>
 
-                          {/* Delete */}
-                          <button
-                            onClick={() => handleDelete(volume.book_id, volume.volume_id)}
-                            disabled={isAnyConverting}
-                            className="p-2 bg-red-600/20 border border-red-600/30 text-red-400 rounded-lg hover:bg-red-600 hover:text-white hover:scale-105 active:scale-95 transition-all disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center"
-                            title={t('delete')}
-                          >
-                            <Trash2 size={18} />
-                          </button>
+                            {/* Convert Font */}
+                            <button
+                              onClick={() => handleConvert(volume.book_id, volume.volume_id)}
+                              disabled={isAnyConverting}
+                              className="p-2 bg-[#242936] border border-[#2d3342] text-white rounded-lg hover:scale-105 active:scale-95 transition-transform disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center flex-1"
+                              title={t('shelf.tooltip.convert')}
+                            >
+                              {isConverting ? (
+                                <RefreshCw size={16} className="animate-spin text-[#ff7233]" />
+                              ) : (
+                                <RefreshCw size={16} />
+                              )}
+                            </button>
+
+                            {/* Delete */}
+                            <button
+                              onClick={() => handleDelete(volume.book_id, volume.volume_id)}
+                              disabled={isAnyConverting}
+                              className="p-2 bg-red-600/20 border border-red-600/30 text-red-400 rounded-lg hover:bg-red-600 hover:text-white hover:scale-105 active:scale-95 transition-all disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center flex-1"
+                              title={t('delete')}
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             </div>

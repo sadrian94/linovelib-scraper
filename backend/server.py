@@ -240,6 +240,12 @@ def save_config(cfg: ConfigModel):
 def get_shelf():
     with get_db() as conn:
         cursor = conn.cursor()
+        # Query download_path config
+        cursor.execute("SELECT VALUE FROM config WHERE KEY = 'download_path'")
+        row_dl = cursor.fetchone()
+        dl_path_str = row_dl[0] if row_dl else "./out"
+        dl_path = Path(dl_path_str).resolve()
+
         cursor.execute("""
             SELECT book_id, volume_id, title, volume_name, author, publisher, 
                    cover_path, epub_path, cache_path, download_date,
@@ -248,6 +254,50 @@ def get_shelf():
         """)
         cols = [d[0] for d in cursor.description]
         rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
+
+    # Healer step: If relative files are not found at CWD, but exist at new download_path,
+    # update the database and return values.
+    for r in rows:
+        epub_p = r["epub_path"]
+        cache_p = r["cache_path"]
+        cover_p = r["cover_path"]
+        
+        db_updates = {}
+        
+        # Check epub_path
+        if epub_p and epub_p.startswith("out/"):
+            resolved_epub = Path(epub_p).resolve()
+            if not resolved_epub.exists():
+                candidate = dl_path / epub_p[4:]
+                if candidate.exists():
+                    r["epub_path"] = str(candidate)
+                    db_updates["epub_path"] = str(candidate)
+                    
+        # Check cache_path
+        if cache_p and cache_p.startswith("out/"):
+            resolved_cache = Path(cache_p).resolve()
+            if not resolved_cache.exists():
+                candidate = dl_path / cache_p[4:]
+                if candidate.exists():
+                    r["cache_path"] = str(candidate)
+                    db_updates["cache_path"] = str(candidate)
+                    
+        # Check cover_path
+        if cover_p and cover_p.startswith("out/"):
+            resolved_cover = Path(cover_p).resolve()
+            if not resolved_cover.exists():
+                candidate = dl_path / cover_p[4:]
+                if candidate.exists():
+                    r["cover_path"] = str(candidate)
+                    db_updates["cover_path"] = str(candidate)
+                    
+        if db_updates:
+            with get_db() as conn:
+                set_clause = ", ".join([f"{k} = ?" for k in db_updates.keys()])
+                params = list(db_updates.values()) + [r["book_id"], r["volume_id"]]
+                conn.execute(f"UPDATE shelf SET {set_clause} WHERE book_id = ? AND volume_id = ?", params)
+                conn.commit()
+
     return rows
 
 class ProgressModel(BaseModel):
