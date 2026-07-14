@@ -63,26 +63,49 @@ class Editer:
         self.color_page_name = "彩页"
         self.html_buffer: dict[str, bytes] = {}
 
-        browser = create_browser()
-        self.tab = browser.latest_tab
+        self.browser = create_browser()
+        self.tab = self.browser.latest_tab
 
-        main_html = self.get_html(self.main_page)
-        self.get_meta_data(main_html)
+        try:
+            main_html = self.get_html(self.main_page)
+            self.get_meta_data(main_html)
 
-        self.img_url_map: dict[str, str] = {}
-        self.volume_no = volume_no
+            self.img_url_map: dict[str, str] = {}
+            self.volume_no = volume_no
 
-        self.epub_path = Path(root_path)
-        self.temp_path_io = tempfile.TemporaryDirectory()
-        self.temp_path = Path(self.temp_path_io.name)
+            self.epub_path = Path(root_path)
+            self.temp_path_io = tempfile.TemporaryDirectory()
+            self.temp_path = Path(self.temp_path_io.name)
 
-        self.missing_last_chap_list: list[str] = []
-        self.is_color_page = True
-        self.page_url_map: dict = {}
-        self.ignore_urls: list = []
-        self.url_buffer: list = []
-        self.max_thread_num = 8
-        self.pool = ThreadPoolExecutor(int(num_thread))
+            self.missing_last_chap_list: list[str] = []
+            self.is_color_page = True
+            self.page_url_map: dict = {}
+            self.ignore_urls: list = []
+            self.url_buffer: list = []
+            self.max_thread_num = 8
+            self.pool = ThreadPoolExecutor(int(num_thread))
+        except Exception:
+            self.close()
+            raise
+
+    def close(self) -> None:
+        """Close the browser instance."""
+        if hasattr(self, "browser") and self.browser:
+            try:
+                self.browser.quit()
+            except Exception as e:
+                print(f"Error quitting browser: {e}")
+            finally:
+                self.browser = None
+
+    def __enter__(self) -> Editer:
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        self.close()
 
     def convert_text(self, text: str) -> str:
         if not hasattr(self, "conversion_mode"):
