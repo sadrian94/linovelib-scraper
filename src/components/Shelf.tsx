@@ -286,17 +286,13 @@ export default function Shelf({ port, language, onRead }: ShelfProps) {
                       const isConverting = converting === `${volume.book_id}_${volume.volume_id}`;
                       const isAnyConverting = converting !== null;
                       
-                      let coverClass = "w-24 h-32";
-                      if (viewMode === 'medium') coverClass = "w-32 h-44";
-                      if (viewMode === 'large') coverClass = "w-40 h-56";
-
                       return (
                         <div 
                           key={volume.volume_id}
                           className="bg-[#161920] border border-[#242936] hover:border-[#ff7233]/30 rounded-xl p-4 flex flex-col items-center justify-between text-center transition-all duration-200"
                         >
-                          {/* Cover Thumbnail */}
-                          <div className={`relative ${coverClass} bg-gray-900 rounded-lg overflow-hidden shadow-lg mb-4 border border-[#242936] flex-shrink-0 group/cover`}>
+                          {/* Cover Thumbnail (Responsive w-full aspect-[3/4]) */}
+                          <div className="relative w-full aspect-[3/4] bg-gray-900 rounded-lg overflow-hidden shadow-lg mb-4 border border-[#242936] flex-shrink-0 group/cover">
                             <img 
                               src={`http://127.0.0.1:${port}/api/reader/asset?path=${encodeURIComponent(volume.cover_path)}`} 
                               alt={volume.volume_name} 
