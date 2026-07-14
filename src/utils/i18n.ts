@@ -47,6 +47,9 @@ export const translations: Record<Language, Record<string, string>> = {
     nextChapter: '下一章',
     'shelf.tooltip.convert': '字體轉換',
     'shelf.error.convert': '轉換字體失敗',
+    'shelf.volumesCount': '卷',
+    'shelf.backToShelf': '返回書架',
+    'shelf.downloadDate': '下載日期',
   },
   'zh-CN': {
     appName: '哔哩轻小说',
@@ -94,6 +97,9 @@ export const translations: Record<Language, Record<string, string>> = {
     nextChapter: '下一章',
     'shelf.tooltip.convert': '字体转换',
     'shelf.error.convert': '转换字体失败',
+    'shelf.volumesCount': '卷',
+    'shelf.backToShelf': '返回书架',
+    'shelf.downloadDate': '下载日期',
   },
   'en': {
     appName: 'Bilinovel',
@@ -141,5 +147,8 @@ export const translations: Record<Language, Record<string, string>> = {
     nextChapter: 'Next Chapter',
     'shelf.tooltip.convert': 'Convert Font',
     'shelf.error.convert': 'Failed to convert book font',
+    'shelf.volumesCount': 'Volumes',
+    'shelf.backToShelf': 'Back to Shelf',
+    'shelf.downloadDate': 'Downloaded',
   }
 };
