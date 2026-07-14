@@ -26,6 +26,7 @@ export default function Shelf({ port, language, onRead }: ShelfProps) {
   const [search, setSearch] = useState('');
   const [converting, setConverting] = useState<string | null>(null);
   const [selectedBookId, setSelectedBookId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'small' | 'medium' | 'large' | 'list'>('medium');
 
   const t = (key: string) => translations[language]?.[key] || key;
 
@@ -173,27 +174,43 @@ export default function Shelf({ port, language, onRead }: ShelfProps) {
               <h2 className="text-xl font-bold">{t('shelf.backToShelf')}</h2>
             </div>
 
-            <div className="flex-1 flex gap-6 overflow-hidden">
-              {/* Left Panel: Series Info (Narrow, no cover) */}
-              <div className="w-48 flex-shrink-0 flex flex-col gap-4">
-                <div className="bg-[#161920]/60 border border-[#242936] rounded-xl p-4 flex flex-col gap-3">
-                  <h3 className="text-sm font-bold text-white leading-snug">{selectedGroup.title}</h3>
-                  <div className="h-px bg-[#242936]" />
-                  <div>
-                    <p className="text-[10px] text-gray-500 font-medium">Author</p>
-                    <p className="text-xs text-gray-300 font-semibold truncate mt-0.5">{selectedGroup.author}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-gray-500 font-medium">Publisher</p>
-                    <p className="text-xs text-gray-300 truncate mt-0.5">{selectedGroup.publisher}</p>
-                  </div>
+            {/* Top Topic Banner */}
+            <div className="bg-[#161920]/60 border border-[#242936] rounded-xl p-4 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 flex-shrink-0">
+              <div>
+                <h3 className="text-md font-bold text-white leading-snug">{selectedGroup.title}</h3>
+                <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5">
+                  <p className="text-[11px] text-gray-400">
+                    <span className="text-gray-500 font-medium mr-1">Author:</span>{selectedGroup.author}
+                  </p>
+                  <p className="text-[11px] text-gray-400">
+                    <span className="text-gray-500 font-medium mr-1">Publisher:</span>{selectedGroup.publisher}
+                  </p>
+                  <p className="text-[11px] text-gray-400">
+                    <span className="text-gray-500 font-medium mr-1">Volumes:</span>{selectedGroup.volumes.length}
+                  </p>
                 </div>
               </div>
 
-              {/* Right Panel: Volumes List Grid */}
-              <div className="flex-1 bg-[#161920]/40 border border-[#242936] rounded-xl flex flex-col overflow-hidden">
-                <div className="flex-1 overflow-y-auto p-6">
-                  <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {/* View Mode Segmented Controls */}
+              <div className="flex items-center gap-1 bg-[#0d0e12] p-1 rounded-lg border border-[#242936] self-start sm:self-auto">
+                {(['small', 'medium', 'large', 'list'] as const).map(mode => (
+                  <button
+                    key={mode}
+                    onClick={() => setViewMode(mode)}
+                    className={`px-3 py-1 text-xs rounded-md transition-all font-medium capitalize ${viewMode === mode ? 'bg-[#ff7233] text-black shadow-md' : 'text-gray-400 hover:text-gray-200'}`}
+                  >
+                    {mode}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Volumes Content Area */}
+            <div className="flex-1 bg-[#161920]/40 border border-[#242936] rounded-xl flex flex-col overflow-hidden">
+              <div className="flex-1 overflow-y-auto p-6">
+                {viewMode === 'list' ? (
+                  /* LIST VIEW */
+                  <div className="space-y-3">
                     {selectedGroup.volumes.map(volume => {
                       const isConverting = converting === `${volume.book_id}_${volume.volume_id}`;
                       const isAnyConverting = converting !== null;
@@ -201,10 +218,85 @@ export default function Shelf({ port, language, onRead }: ShelfProps) {
                       return (
                         <div 
                           key={volume.volume_id}
+                          className="flex items-center justify-between p-4 bg-[#161920] border border-[#242936] hover:border-[#ff7233]/30 rounded-xl transition-all"
+                        >
+                          <div className="flex items-center flex-1 min-w-0 pr-4 gap-4">
+                            <img 
+                              src={`http://127.0.0.1:${port}/api/reader/asset?path=${encodeURIComponent(volume.cover_path)}`} 
+                              alt={volume.volume_name} 
+                              className="w-10 h-14 object-cover rounded border border-[#242936] bg-gray-900 shadow-sm flex-shrink-0"
+                            />
+                            <div className="min-w-0">
+                              <h4 className="font-semibold text-sm text-white truncate">{volume.volume_name}</h4>
+                              <p className="text-xs text-gray-500 mt-1">
+                                {t('shelf.downloadDate')}: {volume.download_date || 'N/A'}
+                              </p>
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center gap-2">
+                            {/* Read Online */}
+                            <button
+                              onClick={() => onRead(volume.book_id, volume.volume_id)}
+                              disabled={isAnyConverting}
+                              className="p-2 bg-[#ff7233] text-black rounded-lg hover:scale-105 active:scale-95 transition-transform disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center"
+                              title={t('readOnline')}
+                            >
+                              <BookOpen size={16} />
+                            </button>
+
+                            {/* Convert Font */}
+                            <button
+                              onClick={() => handleConvert(volume.book_id, volume.volume_id)}
+                              disabled={isAnyConverting}
+                              className="p-2 bg-[#242936] border border-[#2d3342] text-white rounded-lg hover:scale-105 active:scale-95 transition-transform disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center"
+                              title={t('shelf.tooltip.convert')}
+                            >
+                              {isConverting ? (
+                                <RefreshCw size={16} className="animate-spin text-[#ff7233]" />
+                              ) : (
+                                <RefreshCw size={16} />
+                              )}
+                            </button>
+
+                            {/* Delete */}
+                            <button
+                              onClick={() => handleDelete(volume.book_id, volume.volume_id)}
+                              disabled={isAnyConverting}
+                              className="p-2 bg-red-600/20 border border-red-600/30 text-red-400 rounded-lg hover:bg-red-600 hover:text-white hover:scale-105 active:scale-95 transition-all disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center"
+                              title={t('delete')}
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  /* GRID VIEW (Small / Medium / Large) */
+                  <div className={`grid gap-6 ${
+                    viewMode === 'small' 
+                      ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6' 
+                      : viewMode === 'medium'
+                        ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5'
+                        : 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4'
+                  }`}>
+                    {selectedGroup.volumes.map(volume => {
+                      const isConverting = converting === `${volume.book_id}_${volume.volume_id}`;
+                      const isAnyConverting = converting !== null;
+                      
+                      let coverClass = "w-24 h-32";
+                      if (viewMode === 'medium') coverClass = "w-32 h-44";
+                      if (viewMode === 'large') coverClass = "w-40 h-56";
+
+                      return (
+                        <div 
+                          key={volume.volume_id}
                           className="bg-[#161920] border border-[#242936] hover:border-[#ff7233]/30 rounded-xl p-4 flex flex-col items-center justify-between text-center transition-all duration-200"
                         >
-                          {/* Cover Thumbnail (Larger: w-32 h-44) */}
-                          <div className="relative w-32 h-44 bg-gray-900 rounded-lg overflow-hidden shadow-lg mb-4 border border-[#242936] flex-shrink-0 group/cover">
+                          {/* Cover Thumbnail */}
+                          <div className={`relative ${coverClass} bg-gray-900 rounded-lg overflow-hidden shadow-lg mb-4 border border-[#242936] flex-shrink-0 group/cover`}>
                             <img 
                               src={`http://127.0.0.1:${port}/api/reader/asset?path=${encodeURIComponent(volume.cover_path)}`} 
                               alt={volume.volume_name} 
@@ -262,7 +354,7 @@ export default function Shelf({ port, language, onRead }: ShelfProps) {
                       );
                     })}
                   </div>
-                </div>
+                )}
               </div>
             </div>
           </>
