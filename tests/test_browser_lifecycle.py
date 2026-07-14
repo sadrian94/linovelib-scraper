@@ -75,7 +75,39 @@ class TestBrowserLifecycle(unittest.TestCase):
         mock_editer_instance.__enter__.assert_called_once()
         mock_editer_instance.__exit__.assert_called_once()
 
+    @patch('backend.bilinovel.Editer.create_browser')
+    @patch('backend.bilinovel.Editer.Editer.get_html')
+    @patch('backend.bilinovel.Editer.Editer.get_meta_data')
+    @patch('backend.bilinovel.Editer.ThreadPoolExecutor')
+    @patch('backend.bilinovel.Editer.tempfile.TemporaryDirectory')
+    def test_close_cleanup(self, mock_temp_dir, mock_executor, mock_meta, mock_get_html, mock_create_browser):
+        mock_browser = MagicMock()
+        mock_create_browser.return_value = mock_browser
+        
+        mock_pool = MagicMock()
+        mock_executor.return_value = mock_pool
+        
+        mock_temp = MagicMock()
+        mock_temp.name = "/fake/temp/path"
+        mock_temp_dir.return_value = mock_temp
+        
+        editer = Editer(root_path="./out", book_no="1234")
+        
+        # Verify they are assigned
+        self.assertEqual(editer.pool, mock_pool)
+        self.assertEqual(editer.temp_path_io, mock_temp)
+        
+        # Call close
+        editer.close()
+        
+        # Verify both shutdown and cleanup were called
+        mock_pool.shutdown.assert_called_once()
+        mock_temp.cleanup.assert_called_once()
+        
+        # Verify safety guards set them to None
+        self.assertIsNone(editer.pool)
+        self.assertIsNone(editer.temp_path_io)
+
 
 if __name__ == '__main__':
     unittest.main()
-

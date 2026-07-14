@@ -32,7 +32,7 @@ def parse_volume_input(volume_no: str) -> Optional[Union[int, list[int]]]:
 
 
 def query_chaps(book_no: str) -> None:
-    print("未输入卷号，将返回書籍目錄信息......")
+    print("未输入卷号，将返回书籍目录信息......")
     with Editer(root_path="./out", book_no=book_no) as editer:
         print("--------------------------------")
         print(editer.book_name, editer.author)
@@ -61,10 +61,10 @@ def download_single_volume(
         interval=interval,
         num_thread=num_thread,
     ) as editer:
-        print("正在积极地获取書籍信息....")
+        print("正在积极地获取书籍信息....")
         success = editer.get_index_url()
         if not success:
-            print("書籍信息获取失敗")
+            print("书籍信息获取失败")
             return
         print(f"{editer.book_name}-{editer.volume['volume_name']}", editer.author)
         print("****************************")
@@ -74,18 +74,18 @@ def download_single_volume(
         editer.get_text()
         print("*********************")
 
-        print("正在下载插圖.....................................")
+        print("正在下载插图.....................................")
         editer.get_image(is_gui=is_gui, signal=progressring_signal)
 
-        print("正在編輯元數據....")
+        print("正在编辑元数据....")
         editer.get_cover(is_gui=is_gui, signal=cover_signal)
         editer.get_toc()
         editer.get_content()
         editer.get_epub_head()
 
-        print("正在生成電子書....")
+        print("正在生成电子书....")
         epub_file = editer.get_epub()
-        print(f"生成成功！電子書路徑【{epub_file}】")
+        print(f"生成成功！电子书路径【{epub_file}】")
 
 
 def downloader_router(

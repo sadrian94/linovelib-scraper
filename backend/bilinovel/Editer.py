@@ -43,6 +43,8 @@ class Editer:
         interval: int = 0,
         num_thread: int = 1,
     ):
+        self.browser = None
+        self.tab = None
         self.book_no = book_no
         self.url_head = "https://www.linovelib.com"
         self.header = {
@@ -63,10 +65,9 @@ class Editer:
         self.color_page_name = "彩页"
         self.html_buffer: dict[str, bytes] = {}
 
-        self.browser = create_browser()
-        self.tab = self.browser.latest_tab
-
         try:
+            self.browser = create_browser()
+            self.tab = self.browser.latest_tab
             main_html = self.get_html(self.main_page)
             self.get_meta_data(main_html)
 
@@ -89,7 +90,7 @@ class Editer:
             raise
 
     def close(self) -> None:
-        """Close the browser instance."""
+        """Close the browser instance, pool executor, and temporary directory."""
         if hasattr(self, "browser") and self.browser:
             try:
                 self.browser.quit()
@@ -97,6 +98,22 @@ class Editer:
                 print(f"Error quitting browser: {e}")
             finally:
                 self.browser = None
+
+        if hasattr(self, "pool") and self.pool:
+            try:
+                self.pool.shutdown()
+            except Exception as e:
+                print(f"Error shutting down thread pool: {e}")
+            finally:
+                self.pool = None
+
+        if hasattr(self, "temp_path_io") and self.temp_path_io:
+            try:
+                self.temp_path_io.cleanup()
+            except Exception as e:
+                print(f"Error cleaning up temporary directory: {e}")
+            finally:
+                self.temp_path_io = None
 
     def __enter__(self) -> Editer:
         return self
@@ -602,5 +619,4 @@ class Editer:
             if conn:
                 conn.close()
                 
-        self.temp_path_io.cleanup()
         return str(epub_file)
