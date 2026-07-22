@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import shutil
 import socket
+import tempfile
+import uuid
 from pathlib import Path
 
 from DrissionPage import Chromium, ChromiumOptions
@@ -17,6 +19,8 @@ _CHROME_PATHS = [
     r"C:\Program Files\Google\Chrome\Application\chrome.exe",
     r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
 ]
+
+_PROFILE_ROOT = Path(tempfile.gettempdir()) / "linovelib-scraper"
 
 
 def _find_browser(candidates: list[str]) -> str | None:
@@ -52,10 +56,31 @@ def find_browser_path() -> str:
     return r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
 
 
+def _create_browser_profile(port: int) -> Path:
+    """Create an isolated Chromium profile for one scraper session."""
+    _PROFILE_ROOT.mkdir(parents=True, exist_ok=True)
+    profile_path = _PROFILE_ROOT / f"browser-{port}-{uuid.uuid4().hex}"
+    profile_path.mkdir()
+    return profile_path
+
+
+def cleanup_browser_profile(browser: Chromium) -> None:
+    """Remove the temporary browser profile created by :func:`create_browser`."""
+    profile_path = getattr(browser, "_linovelib_profile_path", None)
+    if not profile_path:
+        return
+
+    resolved_profile = Path(profile_path).resolve()
+    resolved_root = _PROFILE_ROOT.resolve()
+    if resolved_profile.is_relative_to(resolved_root):
+        shutil.rmtree(resolved_profile, ignore_errors=True)
+
+
 def create_browser() -> Chromium:
     """Create a DrissionPage Chromium browser with auto-detected path and port."""
     browser_path = find_browser_path()
     port = _find_free_port(9222)
+    profile_path = _create_browser_profile(port)
 
     # Read headless configuration from DB
     headless = True
@@ -81,6 +106,7 @@ def create_browser() -> Chromium:
     co.set_argument("--no-default-browser-check")
     co.set_argument("--disable-features=TranslateUI")
     co.set_argument("--disable-background-networking")
+    co.set_user_data_path(str(profile_path))
     if headless:
         if hasattr(co, "set_headless"):
             co.set_headless(True)
@@ -88,6 +114,13 @@ def create_browser() -> Chromium:
             co.headless(True)
     co.set_local_port(port)
 
-    print(f"使用浏览器: {browser_path} (Headless: {headless})")
-    print(f"调试端口: {port}")
-    return Chromium(co)
+    print(f"Using browser: {browser_path} (Headless: {headless})")
+    print(f"Debug port: {port}")
+    try:
+        browser = Chromium(co)
+    except Exception:
+        shutil.rmtree(profile_path, ignore_errors=True)
+        raise
+
+    browser._linovelib_profile_path = str(profile_path)
+    return browser

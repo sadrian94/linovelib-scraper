@@ -20,7 +20,7 @@ from bs4 import BeautifulSoup
 from PIL import Image
 from rich.progress import track as tqdm
 
-from backend.browser_utils import create_browser
+from backend.browser_utils import cleanup_browser_profile, create_browser
 from backend.bilinovel.utils import (
     check_chars,
     get_container_html,
@@ -32,6 +32,13 @@ from backend.bilinovel.utils import (
 )
 
 lock = threading.RLock()
+
+READER_VIEWPORT = (390, 844)
+CHAPTER_READY_TIMEOUT_SECONDS = 15
+
+
+class IncompleteChapterContentError(RuntimeError):
+    """Raised when the source cannot provide a complete ordered chapter."""
 
 
 class Editer:
@@ -47,6 +54,10 @@ class Editer:
         self.tab = None
         self.book_no = book_no
         self.url_head = "https://www.linovelib.com"
+        # The Taiwanese reader delivers complete chapter content to a narrow,
+        # rendered viewport. The desktop host remains in use for metadata and
+        # catalog parsing, whose markup this application already understands.
+        self.reader_url_head = "https://tw.linovelib.com"
         self.header = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -68,6 +79,7 @@ class Editer:
         try:
             self.browser = create_browser()
             self.tab = self.browser.latest_tab
+            self.tab.set.window.size(*READER_VIEWPORT)
             main_html = self.get_html(self.main_page)
             self.get_meta_data(main_html)
 
@@ -97,6 +109,7 @@ class Editer:
             except Exception as e:
                 print(f"Error quitting browser: {e}")
             finally:
+                cleanup_browser_profile(self.browser)
                 self.browser = None
 
         if hasattr(self, "pool") and self.pool:
@@ -161,43 +174,60 @@ class Editer:
                 "<title>Access denied | www.linovelib.com used Cloudflare to restrict access</title>"
                 in req
             ):
-                print("下载频繁，触发反爬，5秒后重试....")
+                print("Rate limit detected; retrying in 5 seconds...")
                 time.sleep(5)
                 self.tab.get(url)
                 req = self.tab.html
             if is_gbk:
                 req.encoding = "GBK"
+            if is_main_text:
+                self._wait_for_complete_chapter(url)
+                req = self.tab.html
             break
-
-        if is_main_text:
-            bf = BeautifulSoup(req, "html.parser")
-            p_eles = self.tab.eles("tag:p")
-            for p in p_eles:
-                if p.style(style="display") == "none":
-                    all_attrs = p.attrs
-                    class_key = None
-                    class_value = None
-                    for key in all_attrs.keys():
-                        if "data-" in key:
-                            class_key = key
-                            class_value = all_attrs[class_key]
-                    if class_key is not None:
-                        p_elements_to_remove = bf.find_all("p", {class_key: class_value})
-                        for p in p_elements_to_remove:
-                            p.decompose()
-
-            p_tags = bf.find_all("p")
-            for p in p_tags:
-                all_attrs = p.attrs
-                keys_to_delete = [key for key in all_attrs.keys() if "data-" in key]
-                for key in keys_to_delete:
-                    del p[key]
-
-            req = str(bf)
 
         if self.interval > 0:
             time.sleep(self.interval)
         return req
+
+    def _wait_for_complete_chapter(self, url: str) -> None:
+        """Wait for the live reader DOM without changing its source order."""
+        deadline = time.monotonic() + CHAPTER_READY_TIMEOUT_SECONDS
+        stable_polls = 0
+        previous_signature = None
+        script = """
+            const root = document.querySelector('#acontent');
+            if (!root) return '';
+            const text = root.innerText || '';
+            const failed = /內容加載失敗|内容加载失败/.test(text);
+            return `${failed}|${text.length}|${root.children.length}`;
+        """
+
+        while time.monotonic() < deadline:
+            signature = self.tab.run_js(script)
+            if signature:
+                failed, text_length, child_count = signature.split("|", 2)
+                if failed == "false" and int(text_length) > 40:
+                    if signature == previous_signature:
+                        stable_polls += 1
+                        if stable_polls >= 2:
+                            return
+                    else:
+                        stable_polls = 0
+                        previous_signature = signature
+            time.sleep(0.25)
+
+        raise IncompleteChapterContentError(
+            "The source did not provide stable, complete chapter content within "
+            f"{CHAPTER_READY_TIMEOUT_SECONDS} seconds: {url}"
+        )
+
+    def _reader_url(self, url: str) -> str:
+        """Map a catalog URL to the reader host without changing its path."""
+        return re.sub(
+            r"^https://(?:www\.)?linovelib\.com",
+            self.reader_url_head,
+            url,
+        )
 
     def get_html_content(self, url: str, is_buffer: bool = False) -> bytes:
         if is_buffer:
@@ -253,7 +283,7 @@ class Editer:
         self.volume = {"chap_urls": [], "chap_names": [], "volume_name": ""}
         chap_html_list = self.get_chap_list(is_print=False)
         if len(chap_html_list) < self.volume_no:
-            print("输入卷号超过实际卷数！")
+            print("The requested volume number exceeds the number of available volumes.")
             return False
         volume_array = self.volume_no - 1
         chap_html = chap_html_list[volume_array]
@@ -283,12 +313,13 @@ class Editer:
     def get_page_text(self, content_html: str) -> str:
         is_transfer_rubbish_code = "woff2" in content_html
         bf = BeautifulSoup(content_html, "html.parser")
-        text_with_head = bf.find("div", {"id": "TextContent"})
+        text_with_head = bf.find("div", {"id": "TextContent"}) or bf.find(
+            "div", {"id": "acontent"}
+        )
+        if text_with_head is None:
+            raise ValueError("Chapter page does not contain a text content container")
 
-        self.remove_element(text_with_head, id="show-more-images")
-        self.remove_element(text_with_head, class_="google-auto-placed ap_container")
-        self.remove_element(text_with_head, class_="dag")
-        self.remove_element(text_with_head, id="hidden-images")
+        self._remove_non_chapter_content(text_with_head)
         text_html = str(text_with_head)
 
         pattern = re.compile(r"<!--(.*?)-->", re.DOTALL)
@@ -312,7 +343,10 @@ class Editer:
                 if text_html[symbol_index - 1] != "\n":
                     text_html = text_html[:symbol_index] + "\n" + text_html[symbol_index:]
 
-        text = BeautifulSoup(text_html, "html.parser").find("div", id="TextContent")
+        text_soup = BeautifulSoup(text_html, "html.parser")
+        text = text_soup.find("div", id="TextContent") or text_soup.find(
+            "div", id="acontent"
+        )
 
         match = re.findall(r"<p(\d+)>", str(text))
         if len(match) > 0:
@@ -326,7 +360,9 @@ class Editer:
             text = text[:-1]
 
         msg = "<br/><br/><br/>————————————以下为告示，读者请无视——————————————<p>"
-        text = text[: text.find(msg)]
+        notice_index = text.find(msg)
+        if notice_index != -1:
+            text = text[:notice_index]
 
         if is_transfer_rubbish_code:
             text = replace_rubbish_text(text)
@@ -343,35 +379,85 @@ class Editer:
         for remove_element in remove_list:
             remove_element.decompose()
 
+    @staticmethod
+    def _remove_non_chapter_content(content_root) -> None:
+        """Remove injected advertising and reader UI without touching prose."""
+        for element in content_root.find_all(
+            ["script", "style", "iframe", "noscript", "ins"]
+        ):
+            if element.name in {"iframe", "ins"}:
+                container = element.find_parent(["div", "section", "aside"])
+                if container is not None and container is not content_root:
+                    container.decompose()
+                    continue
+            element.decompose()
+
+        ad_marker = re.compile(
+            r"(?:^|[\s_-])(?:ad|ads|advert(?:isement)?|google-auto-placed|dag)(?:$|[\s_-])",
+            re.IGNORECASE,
+        )
+        for element in content_root.find_all(True):
+            marker = " ".join(
+                part
+                for part in (
+                    element.get("id", ""),
+                    " ".join(element.get("class", [])),
+                )
+                if part
+            )
+            if marker and ad_marker.search(marker):
+                element.decompose()
+
+        for element in content_root.find_all(["div", "section", "aside", "center"]):
+            if not element.get_text(strip=True) and not element.find("img"):
+                element.decompose()
+
     def get_chap_text(
         self, url: str, chap_name: str, return_next_chapter: bool = False
     ) -> tuple[str, Optional[str]]:
-        text_chap = ""
+        page_texts: list[str] = []
         page_no = 1
+        url = self._reader_url(url)
         url_ori = url
         next_chap_url = None
         while True:
             if page_no == 1:
                 str_out = chap_name
             else:
-                str_out = f"    正在下载第{page_no}页......"
+                str_out = f"    Downloading page {page_no}..."
             print(str_out)
             content_html = self.get_html(url, is_gbk=False, is_main_text=True)
+            if self._has_content_load_failure(content_html):
+                raise IncompleteChapterContentError(
+                    "The source returned incomplete chapter content. "
+                    f"No reliable ordered fallback is available for {url}."
+                )
             text = self.get_page_text(content_html)
-            text_chap += text
+            # Continuation pages frequently begin/end with reader-injected
+            # <br> elements. Trim only page boundaries, not paragraph breaks.
+            text = re.sub(r"^(?:\s|<br\s*/?>)+", "", text)
+            text = re.sub(r"(?:\s|<br\s*/?>)+$", "", text)
+            if text:
+                page_texts.append(text)
             url_new = url_ori.replace(".html", f"_{page_no + 1}.html")[
-                len(self.url_head) :
+                len(self.reader_url_head) :
             ]
             if url_new in content_html:
                 page_no += 1
-                url = self.url_head + url_new
+                url = self.reader_url_head + url_new
             else:
                 if return_next_chapter:
                     next_chap_url = self.url_head + re.search(
-                        r'书签</a><a href="(.*?)">下一页</a>', content_html
+                        r'(?:书签|書籤)</a><a href="(.*?)">(?:下一页|下一頁)</a>',
+                        content_html,
                     ).group(1)
                 break
-        return text_chap, next_chap_url
+        return "\n".join(page_texts), next_chap_url
+
+    @staticmethod
+    def _has_content_load_failure(content_html: str) -> bool:
+        """Return whether Linovelib inserted its incomplete-content marker."""
+        return "内容加载失败" in content_html or "內容加載失敗" in content_html
 
     def get_text(self) -> None:
         self.make_folder()
@@ -436,7 +522,7 @@ class Editer:
                 signal.emit(signal_msg)
         except Exception as e:
             print(e)
-            print("没有封面图片，请自行用第三方EPUB编辑器手动添加封面")
+            print("No cover image found. Add one manually with a third-party EPUB editor.")
         (self.text_path / "cover.xhtml").write_text(
             get_cover_html(img_w, img_h), encoding="utf-8"
         )
@@ -469,7 +555,9 @@ class Editer:
                     len(self.img_url_map)
                 ).zfill(2)
                 print("**************")
-                print("提示：没有彩页，但主页封面存在，将使用主页的封面图片作为本卷图书封面")
+                print(
+                    "No color page found; using the cover image from the book page for this volume."
+                )
                 print("**************")
 
     @staticmethod
@@ -478,7 +566,9 @@ class Editer:
 
     def get_prev_url(self, chap_no: int) -> str:
         content_html = self.get_html(
-            self.volume["chap_urls"][chap_no], is_gbk=False, is_main_text=True
+            self._reader_url(self.volume["chap_urls"][chap_no]),
+            is_gbk=False,
+            is_main_text=True,
         )
         next_url = self.url_head + re.search(
             r'<div class="mlfy_page"><a href="(.*?)">上一页</a>', content_html
@@ -512,18 +602,26 @@ class Editer:
     def hand_in_url(
         self, chap_name: str, is_gui: bool = False, signal=None, editline=None
     ) -> str:
-        error_msg = f'章节"{chap_name}"连接失效，请手动输入该章节链接(手机版"{self.url_head}"开头的链接):'
+        error_msg = (
+            f'Chapter "{chap_name}" has an invalid link. Enter its mobile-page URL '
+            f'(beginning with "{self.url_head}"): '
+        )
         return self.hand_in_msg(error_msg, is_gui, signal, editline)
 
     def hand_in_color_page_name(
         self, is_gui: bool = False, signal=None, editline=None
     ) -> str:
         if is_gui:
-            error_msg = "插图页面不存在，需要下拉选择插图页标题，若不需要插图页则保持本栏为空直接点确定："
+            error_msg = (
+                "The illustration page is missing. Select its title, or leave this blank "
+                "and confirm to skip it: "
+            )
             editline.addItems(self.volume["chap_names"])
             editline.setCurrentIndex(-1)
         else:
-            error_msg = "插图页面不存在，需要手动输入插图页标题，若不需要插图页则不输入直接回车："
+            error_msg = (
+                "The illustration page is missing. Enter its title, or press Enter to skip it: "
+            )
         return self.hand_in_msg(error_msg, is_gui, signal, editline)
 
     def get_toc(self) -> None:
@@ -563,17 +661,17 @@ class Editer:
         import sqlite3
         from datetime import datetime
 
-        # Build book subdirectory: out/書名/
+        # Build book subdirectory: out/book-name/
         safe_book_name = check_chars(self.book_name)
         book_dir = self.epub_path / safe_book_name
         book_dir.mkdir(parents=True, exist_ok=True)
 
-        # Filename: 書名 第X卷.epub
+        # Filename: book-name volume-X.epub
         safe_volume_name = check_chars(self.volume['volume_name'])
         epub_name = f"{safe_book_name} {safe_volume_name}"
         epub_file = book_dir / f"{epub_name}.epub"
 
-        # Cache for in-app reader: out/書名/.library/bookno_volno/
+        # Cache for in-app reader: out/book-name/.library/book-number_volume-number/
         cache_path = book_dir / ".library" / f"{self.book_no}_{self.volume_no}"
         if cache_path.exists():
             shutil.rmtree(cache_path)

@@ -127,7 +127,7 @@ def get_content_html(
 {spine_chapters}
   </spine>
   <guide>
-    <reference type="cover" title="封面" href="Text/cover.xhtml"/>
+    <reference type="cover" title="Cover" href="Text/cover.xhtml"/>
   </guide>
 </package>"""
 
