@@ -3,6 +3,8 @@
 A desktop application for downloading and reading light novels from **嗶哩輕小說 (BiliNovel)**.  
 Built with **Tauri + React + TypeScript** on the frontend and **Python (FastAPI)** on the backend.
 
+**Portfolio tags:** `Desktop Application` · `Web Scraping` · `E-book Reader` · `EPUB Generation` · `Full-Stack` · `Multilingual UX` · `Local-First`
+
 ---
 
 ## ✨ Features
@@ -20,13 +22,13 @@ Built with **Tauri + React + TypeScript** on the frontend and **Python (FastAPI)
 
 | Layer | Technology |
 |-------|-----------|
-| Desktop Shell | [Tauri v2](https://tauri.app) (Rust) |
-| Frontend | React 18 + TypeScript + Tailwind CSS |
-| Backend API | Python FastAPI + Uvicorn |
-| Scraping | Playwright / nodriver |
-| EPUB Generation | Custom XHTML + zipfile |
-| Database | SQLite (local library index) |
-| Font Conversion | zhconv |
+| Desktop Shell | [Tauri v2](https://tauri.app) + Rust |
+| Frontend | React 18, TypeScript, Vite, Tailwind CSS, Lucide React |
+| Backend API | Python, FastAPI, Uvicorn |
+| Scraping | DrissionPage (Chromium automation), Requests, Beautiful Soup |
+| E-book Pipeline | Custom XHTML/EPUB generation with Python `zipfile` |
+| Local Storage | SQLite (library index and reading progress) |
+| Text Conversion | zhconv (Traditional/Simplified Chinese) |
 
 ---
 
