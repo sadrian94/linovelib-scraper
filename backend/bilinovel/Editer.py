@@ -20,7 +20,7 @@ from bs4 import BeautifulSoup
 from PIL import Image
 from rich.progress import track as tqdm
 
-from backend.browser_utils import create_browser
+from backend.browser_utils import cleanup_browser_profile, create_browser
 from backend.bilinovel.utils import (
     check_chars,
     get_container_html,
@@ -32,6 +32,13 @@ from backend.bilinovel.utils import (
 )
 
 lock = threading.RLock()
+
+READER_VIEWPORT = (390, 844)
+CHAPTER_READY_TIMEOUT_SECONDS = 15
+
+
+class IncompleteChapterContentError(RuntimeError):
+    """Raised when the source cannot provide a complete ordered chapter."""
 
 
 class Editer:
@@ -47,6 +54,10 @@ class Editer:
         self.tab = None
         self.book_no = book_no
         self.url_head = "https://www.linovelib.com"
+        # The Taiwanese reader delivers complete chapter content to a narrow,
+        # rendered viewport. The desktop host remains in use for metadata and
+        # catalog parsing, whose markup this application already understands.
+        self.reader_url_head = "https://tw.linovelib.com"
         self.header = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -68,6 +79,7 @@ class Editer:
         try:
             self.browser = create_browser()
             self.tab = self.browser.latest_tab
+            self.tab.set.window.size(*READER_VIEWPORT)
             main_html = self.get_html(self.main_page)
             self.get_meta_data(main_html)
 
@@ -97,6 +109,7 @@ class Editer:
             except Exception as e:
                 print(f"Error quitting browser: {e}")
             finally:
+                cleanup_browser_profile(self.browser)
                 self.browser = None
 
         if hasattr(self, "pool") and self.pool:
@@ -167,63 +180,54 @@ class Editer:
                 req = self.tab.html
             if is_gbk:
                 req.encoding = "GBK"
+            if is_main_text:
+                self._wait_for_complete_chapter(url)
+                req = self.tab.html
             break
-
-        if is_main_text:
-            self._materialize_reading_order()
-            req = self.tab.html
 
         if self.interval > 0:
             time.sleep(self.interval)
         return req
 
-    def _materialize_reading_order(self) -> None:
-        """Put visible chapter paragraphs into the order the browser renders.
-
-        Some Linovelib responses deliberately scramble paragraph nodes and use
-        client-side layout to restore their reading order.  Serializing the DOM
-        before that layout is materialized permanently loses the sequence in an
-        EPUB.  This runs in the loaded page so computed positions are available,
-        removes hidden decoys, and leaves ordinary pages in their DOM order.
-        """
+    def _wait_for_complete_chapter(self, url: str) -> None:
+        """Wait for the live reader DOM without changing its source order."""
+        deadline = time.monotonic() + CHAPTER_READY_TIMEOUT_SECONDS
+        stable_polls = 0
+        previous_signature = None
         script = """
-(() => {
-  const content = document.querySelector('#TextContent, #acontent');
-  if (!content) return false;
+            const root = document.querySelector('#acontent');
+            if (!root) return '';
+            const text = root.innerText || '';
+            const failed = /內容加載失敗|内容加载失败/.test(text);
+            return `${failed}|${text.length}|${root.children.length}`;
+        """
 
-  const paragraphs = Array.from(content.children)
-    .filter((node) => node.tagName === 'P')
-    .map((node, index) => {
-      const style = window.getComputedStyle(node);
-      const rect = node.getBoundingClientRect();
-      return { node, index, hidden: style.display === 'none' ||
-          style.visibility === 'hidden' || Number(style.opacity) === 0,
-          top: rect.top, left: rect.left };
-    });
+        while time.monotonic() < deadline:
+            signature = self.tab.run_js(script)
+            if signature:
+                failed, text_length, child_count = signature.split("|", 2)
+                if failed == "false" and int(text_length) > 40:
+                    if signature == previous_signature:
+                        stable_polls += 1
+                        if stable_polls >= 2:
+                            return
+                    else:
+                        stable_polls = 0
+                        previous_signature = signature
+            time.sleep(0.25)
 
-  const visible = paragraphs.filter((paragraph) => !paragraph.hidden);
-  if (!visible.length) return false;
+        raise IncompleteChapterContentError(
+            "The source did not provide stable, complete chapter content within "
+            f"{CHAPTER_READY_TIMEOUT_SECONDS} seconds: {url}"
+        )
 
-  const hasLayoutOrder = visible.some((paragraph, index) =>
-    index && (paragraph.top !== visible[index - 1].top ||
-      paragraph.left !== visible[index - 1].left));
-  if (hasLayoutOrder) {
-    visible.sort((a, b) => a.top - b.top || a.left - b.left || a.index - b.index);
-  }
-
-  for (const paragraph of paragraphs) {
-    if (paragraph.hidden) paragraph.node.remove();
-  }
-  for (const paragraph of visible) content.appendChild(paragraph.node);
-  return true;
-})()
-"""
-        try:
-            self.tab.run_js(script)
-        except Exception as exc:
-            # A page without a usable layout is still downloadable in source
-            # order; do not silently drop its text because the mitigation failed.
-            print(f"Could not materialize chapter reading order: {exc}")
+    def _reader_url(self, url: str) -> str:
+        """Map a catalog URL to the reader host without changing its path."""
+        return re.sub(
+            r"^https://(?:www\.)?linovelib\.com",
+            self.reader_url_head,
+            url,
+        )
 
     def get_html_content(self, url: str, is_buffer: bool = False) -> bytes:
         if is_buffer:
@@ -315,10 +319,7 @@ class Editer:
         if text_with_head is None:
             raise ValueError("Chapter page does not contain a text content container")
 
-        self.remove_element(text_with_head, id="show-more-images")
-        self.remove_element(text_with_head, class_="google-auto-placed ap_container")
-        self.remove_element(text_with_head, class_="dag")
-        self.remove_element(text_with_head, id="hidden-images")
+        self._remove_non_chapter_content(text_with_head)
         text_html = str(text_with_head)
 
         pattern = re.compile(r"<!--(.*?)-->", re.DOTALL)
@@ -378,11 +379,45 @@ class Editer:
         for remove_element in remove_list:
             remove_element.decompose()
 
+    @staticmethod
+    def _remove_non_chapter_content(content_root) -> None:
+        """Remove injected advertising and reader UI without touching prose."""
+        for element in content_root.find_all(
+            ["script", "style", "iframe", "noscript", "ins"]
+        ):
+            if element.name in {"iframe", "ins"}:
+                container = element.find_parent(["div", "section", "aside"])
+                if container is not None and container is not content_root:
+                    container.decompose()
+                    continue
+            element.decompose()
+
+        ad_marker = re.compile(
+            r"(?:^|[\s_-])(?:ad|ads|advert(?:isement)?|google-auto-placed|dag)(?:$|[\s_-])",
+            re.IGNORECASE,
+        )
+        for element in content_root.find_all(True):
+            marker = " ".join(
+                part
+                for part in (
+                    element.get("id", ""),
+                    " ".join(element.get("class", [])),
+                )
+                if part
+            )
+            if marker and ad_marker.search(marker):
+                element.decompose()
+
+        for element in content_root.find_all(["div", "section", "aside", "center"]):
+            if not element.get_text(strip=True) and not element.find("img"):
+                element.decompose()
+
     def get_chap_text(
         self, url: str, chap_name: str, return_next_chapter: bool = False
     ) -> tuple[str, Optional[str]]:
-        text_chap = ""
+        page_texts: list[str] = []
         page_no = 1
+        url = self._reader_url(url)
         url_ori = url
         next_chap_url = None
         while True:
@@ -392,21 +427,37 @@ class Editer:
                 str_out = f"    Downloading page {page_no}..."
             print(str_out)
             content_html = self.get_html(url, is_gbk=False, is_main_text=True)
+            if self._has_content_load_failure(content_html):
+                raise IncompleteChapterContentError(
+                    "The source returned incomplete chapter content. "
+                    f"No reliable ordered fallback is available for {url}."
+                )
             text = self.get_page_text(content_html)
-            text_chap += text
+            # Continuation pages frequently begin/end with reader-injected
+            # <br> elements. Trim only page boundaries, not paragraph breaks.
+            text = re.sub(r"^(?:\s|<br\s*/?>)+", "", text)
+            text = re.sub(r"(?:\s|<br\s*/?>)+$", "", text)
+            if text:
+                page_texts.append(text)
             url_new = url_ori.replace(".html", f"_{page_no + 1}.html")[
-                len(self.url_head) :
+                len(self.reader_url_head) :
             ]
             if url_new in content_html:
                 page_no += 1
-                url = self.url_head + url_new
+                url = self.reader_url_head + url_new
             else:
                 if return_next_chapter:
                     next_chap_url = self.url_head + re.search(
-                        r'书签</a><a href="(.*?)">下一页</a>', content_html
+                        r'(?:书签|書籤)</a><a href="(.*?)">(?:下一页|下一頁)</a>',
+                        content_html,
                     ).group(1)
                 break
-        return text_chap, next_chap_url
+        return "\n".join(page_texts), next_chap_url
+
+    @staticmethod
+    def _has_content_load_failure(content_html: str) -> bool:
+        """Return whether Linovelib inserted its incomplete-content marker."""
+        return "内容加载失败" in content_html or "內容加載失敗" in content_html
 
     def get_text(self) -> None:
         self.make_folder()
@@ -515,7 +566,9 @@ class Editer:
 
     def get_prev_url(self, chap_no: int) -> str:
         content_html = self.get_html(
-            self.volume["chap_urls"][chap_no], is_gbk=False, is_main_text=True
+            self._reader_url(self.volume["chap_urls"][chap_no]),
+            is_gbk=False,
+            is_main_text=True,
         )
         next_url = self.url_head + re.search(
             r'<div class="mlfy_page"><a href="(.*?)">上一页</a>', content_html
