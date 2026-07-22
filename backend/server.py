@@ -236,6 +236,29 @@ def save_config(cfg: ConfigModel):
         conn.commit()
     return {"status": "success"}
 
+
+def resolve_shelf_path(path_value: str | None, download_path: Path) -> Path | None:
+    """Resolve a shelf path, including legacy relative ``out`` paths.
+
+    Shelf records created on Windows use backslashes, while earlier healing
+    logic only recognized ``out/``.  Check both forms and rebase legacy paths
+    to the configured download directory when the original location is gone.
+    """
+    if not path_value:
+        return None
+
+    stored_path = Path(path_value)
+    if stored_path.exists():
+        return stored_path.resolve()
+
+    portable_path = path_value.replace("\\", "/")
+    if portable_path.startswith("out/"):
+        candidate = download_path / portable_path.removeprefix("out/")
+        if candidate.exists():
+            return candidate.resolve()
+    return None
+
+
 @app.get("/api/shelf")
 def get_shelf():
     with get_db() as conn:
@@ -255,50 +278,48 @@ def get_shelf():
         cols = [d[0] for d in cursor.description]
         rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
 
-    # Healer step: If relative files are not found at CWD, but exist at new download_path,
-    # update the database and return values.
+    updates: list[tuple[dict[str, str], str, int]] = []
+    stale_records: list[tuple[str, int]] = []
     for r in rows:
-        epub_p = r["epub_path"]
-        cache_p = r["cache_path"]
-        cover_p = r["cover_path"]
-        
-        db_updates = {}
-        
-        # Check epub_path
-        if epub_p and epub_p.startswith("out/"):
-            resolved_epub = Path(epub_p).resolve()
-            if not resolved_epub.exists():
-                candidate = dl_path / epub_p[4:]
-                if candidate.exists():
-                    r["epub_path"] = str(candidate)
-                    db_updates["epub_path"] = str(candidate)
-                    
-        # Check cache_path
-        if cache_p and cache_p.startswith("out/"):
-            resolved_cache = Path(cache_p).resolve()
-            if not resolved_cache.exists():
-                candidate = dl_path / cache_p[4:]
-                if candidate.exists():
-                    r["cache_path"] = str(candidate)
-                    db_updates["cache_path"] = str(candidate)
-                    
-        # Check cover_path
-        if cover_p and cover_p.startswith("out/"):
-            resolved_cover = Path(cover_p).resolve()
-            if not resolved_cover.exists():
-                candidate = dl_path / cover_p[4:]
-                if candidate.exists():
-                    r["cover_path"] = str(candidate)
-                    db_updates["cover_path"] = str(candidate)
-                    
-        if db_updates:
-            with get_db() as conn:
-                set_clause = ", ".join([f"{k} = ?" for k in db_updates.keys()])
-                params = list(db_updates.values()) + [r["book_id"], r["volume_id"]]
-                conn.execute(f"UPDATE shelf SET {set_clause} WHERE book_id = ? AND volume_id = ?", params)
-                conn.commit()
+        epub_path = resolve_shelf_path(r["epub_path"], dl_path)
+        cache_path = resolve_shelf_path(r["cache_path"], dl_path)
 
-    return rows
+        # A listed volume must remain readable and downloadable.  Removing a
+        # volume outside the app should not leave a dead shelf entry behind.
+        if not epub_path or not epub_path.is_file() or not cache_path or not cache_path.is_dir():
+            stale_records.append((r["book_id"], r["volume_id"]))
+            continue
+
+        db_updates: dict[str, str] = {}
+        if r["epub_path"] != str(epub_path):
+            r["epub_path"] = str(epub_path)
+            db_updates["epub_path"] = str(epub_path)
+        if r["cache_path"] != str(cache_path):
+            r["cache_path"] = str(cache_path)
+            db_updates["cache_path"] = str(cache_path)
+
+        cover_path = resolve_shelf_path(r["cover_path"], dl_path)
+        if cover_path and r["cover_path"] != str(cover_path):
+            r["cover_path"] = str(cover_path)
+            db_updates["cover_path"] = str(cover_path)
+        if db_updates:
+            updates.append((db_updates, r["book_id"], r["volume_id"]))
+
+    if updates or stale_records:
+        with get_db() as conn:
+            for db_updates, book_id, volume_id in updates:
+                set_clause = ", ".join(f"{key} = ?" for key in db_updates)
+                conn.execute(
+                    f"UPDATE shelf SET {set_clause} WHERE book_id = ? AND volume_id = ?",
+                    [*db_updates.values(), book_id, volume_id],
+                )
+            conn.executemany(
+                "DELETE FROM shelf WHERE book_id = ? AND volume_id = ?", stale_records
+            )
+            conn.commit()
+
+    stale_keys = set(stale_records)
+    return [r for r in rows if (r["book_id"], r["volume_id"]) not in stale_keys]
 
 class ProgressModel(BaseModel):
     book_id: str
@@ -339,12 +360,16 @@ def delete_book(book_id: str, volume_id: int):
             
             try:
                 if epub:
-                    epub_path = Path(epub).resolve()
+                    epub_path = resolve_shelf_path(epub, dl_path)
+                    if epub_path is None:
+                        epub_path = Path(epub).resolve()
                     if epub_path.is_relative_to(dl_path) and epub_path != dl_path:
                         if epub_path.is_file():
                             os.remove(str(epub_path))
                 if cache:
-                    cache_path = Path(cache).resolve()
+                    cache_path = resolve_shelf_path(cache, dl_path)
+                    if cache_path is None:
+                        cache_path = Path(cache).resolve()
                     if cache_path.is_relative_to(dl_path) and cache_path != dl_path:
                         if cache_path.is_dir():
                             import shutil
