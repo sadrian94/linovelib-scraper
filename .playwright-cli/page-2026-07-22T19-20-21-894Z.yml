@@ -1,0 +1,41 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - heading "插圖" [level=1] [ref=e6]
+      - heading "狼與辛香料 1" [level=3] [ref=e7]
+    - generic [ref=e8]:
+      - paragraph [ref=e9]: 台版 轉自 深夜讀書會
+      - paragraph [ref=e10]: 論壇：ritdon.com
+      - paragraph [ref=e11]: 作者：支倉凍砂
+      - paragraph [ref=e12]: 插畫：文倉十
+      - paragraph [ref=e13]: ————————————————
+      - paragraph [ref=e14]: "簡介:"
+      - paragraph [ref=e15]: ★於2008年動畫化，並另有漫畫版本。
+      - paragraph [ref=e16]: 行商人羅倫斯在馬車貨台上的麥束堆里，發現睡夢中的少女。
+      - paragraph [ref=e17]: 自稱是豐收之神赫蘿的美麗少女，長了狼的耳朵及尾巴。
+      - paragraph [ref=e18]: 「雖然咱長久以來被尊為神，不過，咱就是咱，咱是赫蘿。」
+      - paragraph [ref=e19]: 羅倫斯不斷被說話狡詐的赫蘿捉弄。
+      - paragraph [ref=e20]: 儘管無法確信赫蘿是否是掌控豐收的狼神，羅倫斯還是答應讓赫蘿與他一同旅行。
+      - paragraph [ref=e21]: 二人展開旅途不久，一個意外的發財機會降臨，據說某種銀幣在不久的將來會升值。
+      - paragraph [ref=e22]: 心存懷疑的羅倫斯決定放手一搏，但是——
+  - generic [ref=e29]: 返回目录目錄書頁下一章
+  - generic [ref=e32]:
+    - generic [ref=e34]:
+      - textbox "寫下感想……" [ref=e36]
+      - generic [ref=e37]:
+        - list:
+          - listitem [ref=e38] [cursor=pointer]:
+            - generic [ref=e39]: 
+          - listitem [ref=e40] [cursor=pointer]:
+            - button "發 表" [ref=e41]
+          - listitem [ref=e42] [cursor=pointer]: 劇透
+    - generic [ref=e43]:
+      - emphasis [ref=e44]: "62"
+      - text: 人參與，
+      - emphasis [ref=e45]: "9"
+      - text: 條評論
+    - generic [ref=e47]:
+      - text: 請
+      - link "[登錄]" [ref=e48] [cursor=pointer]:
+        - /url: /login.php
+      - text: 後查看全部評論

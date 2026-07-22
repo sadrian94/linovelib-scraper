@@ -1,0 +1,2 @@
+# Release-only dependency for bundling the Python FastAPI server as a Tauri resource.
+pyinstaller>=6.0

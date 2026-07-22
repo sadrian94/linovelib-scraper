@@ -1,12 +1,12 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from backend.browser_utils import cleanup_browser_profile, create_browser
+from server.browser_utils import cleanup_browser_profile, create_browser
 
 
 class TestBrowserProfiles(unittest.TestCase):
-    @patch("backend.browser_utils.Chromium")
-    @patch("backend.browser_utils.ChromiumOptions")
+    @patch("server.browser_utils.Chromium")
+    @patch("server.browser_utils.ChromiumOptions")
     def test_create_browser_uses_an_isolated_profile(self, mock_options, mock_chromium):
         browser = MagicMock()
         mock_chromium.return_value = browser

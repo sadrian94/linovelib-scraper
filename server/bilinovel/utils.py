@@ -1,4 +1,4 @@
-"""Shared utilities for bilinovel backend."""
+"""Shared utilities for the Bilinovel server."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from typing import Optional
 
 from bs4 import BeautifulSoup
 
-from backend.rubbish_secret_map import rubbish_secret_map
+from server.rubbish_secret_map import rubbish_secret_map
 
 
 def get_container_html() -> str:

@@ -2,7 +2,7 @@ import os
 import sys
 from pathlib import Path
 
-# Add project root to sys.path so we can import 'backend.server' etc.
+# Add project root so the ``server`` package works both as a module and script.
 root_dir = Path(__file__).resolve().parent.parent
 if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
@@ -32,7 +32,9 @@ app.add_middleware(
 
 from contextlib import contextmanager
 
-DB_PATH = Path(__file__).resolve().parent.parent / "bili-config.db"
+APP_DATA_DIR = Path(os.environ.get("BILINOVEL_DATA_DIR", root_dir))
+APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = APP_DATA_DIR / "bili-config.db"
 
 @contextmanager
 def get_db():
@@ -170,9 +172,13 @@ def init_db():
             download_date TEXT,
             reading_progress_chapter INTEGER DEFAULT 0,
             reading_progress_scroll REAL DEFAULT 0.0,
+            reading_progress_cfi TEXT,
             PRIMARY KEY (book_id, volume_id)
         );
         """)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(shelf)")}
+        if "reading_progress_cfi" not in columns:
+            conn.execute("ALTER TABLE shelf ADD COLUMN reading_progress_cfi TEXT")
         # Default config seed
         defaults = [
             ("download_path", "./out"),
@@ -272,7 +278,7 @@ def get_shelf():
         cursor.execute("""
             SELECT book_id, volume_id, title, volume_name, author, publisher, 
                    cover_path, epub_path, cache_path, download_date,
-                   reading_progress_chapter, reading_progress_scroll 
+                   reading_progress_chapter, reading_progress_scroll, reading_progress_cfi
             FROM shelf
         """)
         cols = [d[0] for d in cursor.description]
@@ -282,11 +288,9 @@ def get_shelf():
     stale_records: list[tuple[str, int]] = []
     for r in rows:
         epub_path = resolve_shelf_path(r["epub_path"], dl_path)
-        cache_path = resolve_shelf_path(r["cache_path"], dl_path)
-
-        # A listed volume must remain readable and downloadable.  Removing a
-        # volume outside the app should not leave a dead shelf entry behind.
-        if not epub_path or not epub_path.is_file() or not cache_path or not cache_path.is_dir():
+        # The EPUB archive is the sole source of truth for the Reader.  A
+        # legacy unpacked cache may be absent or stale without invalidating it.
+        if not epub_path or not epub_path.is_file():
             stale_records.append((r["book_id"], r["volume_id"]))
             continue
 
@@ -294,7 +298,8 @@ def get_shelf():
         if r["epub_path"] != str(epub_path):
             r["epub_path"] = str(epub_path)
             db_updates["epub_path"] = str(epub_path)
-        if r["cache_path"] != str(cache_path):
+        cache_path = resolve_shelf_path(r["cache_path"], dl_path)
+        if cache_path and r["cache_path"] != str(cache_path):
             r["cache_path"] = str(cache_path)
             db_updates["cache_path"] = str(cache_path)
 
@@ -324,17 +329,18 @@ def get_shelf():
 class ProgressModel(BaseModel):
     book_id: str
     volume_id: int
-    chapter_index: int
-    scroll_position: float
+    chapter_index: int = 0
+    scroll_position: float = 0.0
+    epub_cfi: Optional[str] = None
 
 @app.post("/api/shelf/progress")
 def update_progress(prog: ProgressModel):
     with get_db() as conn:
         conn.execute("""
             UPDATE shelf 
-            SET reading_progress_chapter = ?, reading_progress_scroll = ? 
+            SET reading_progress_chapter = ?, reading_progress_scroll = ?, reading_progress_cfi = ?
             WHERE book_id = ? AND volume_id = ?
-        """, (prog.chapter_index, prog.scroll_position, prog.book_id, prog.volume_id))
+        """, (prog.chapter_index, prog.scroll_position, prog.epub_cfi, prog.book_id, prog.volume_id))
         conn.commit()
     return {"status": "success"}
 
@@ -440,11 +446,11 @@ class MockSignal:
 
 def run_download_thread(book_id: str, volume_id: str, config: dict):
     try:
-        from backend.bilinovel.bilinovel_router import downloader_router
+        from server.bilinovel.bilinovel_router import downloader_router
         session.set_status("downloading")
         session.write_log(f"Starting download for Book: {book_id}, Volume: {volume_id}")
         edit_line = MockEditLine()
-        downloader_router(
+        epub_files = downloader_router(
             root_path=config.get("download_path", "./out"),
             book_no=book_id,
             volume_no=volume_id,
@@ -456,6 +462,15 @@ def run_download_thread(book_id: str, volume_id: str, config: dict):
             cover_signal=MockSignal("cover"),
             edit_line_hang=edit_line
         )
+        if (
+            not epub_files
+            or any(
+                not isinstance(epub_file, str) or not epub_file or not Path(epub_file).is_file()
+                for epub_file in epub_files
+            )
+        ):
+            raise RuntimeError("Download finished without creating an EPUB")
+        session.write_log("EPUB saved to: " + "; ".join(epub_files))
         session.set_status("completed")
     except Exception as e:
         session.write_log(f"Download thread crashed: {e}")
@@ -535,6 +550,23 @@ def get_reader_asset(path: str):
         
     from fastapi.responses import FileResponse
     return FileResponse(str(resolved_path))
+
+
+@app.get("/api/reader/epub/{book_id}/{volume_id}")
+def get_reader_epub(book_id: str, volume_id: int):
+    """Serve the packaged EPUB itself; the React reader never reads `.library`."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT epub_path FROM shelf WHERE book_id = ? AND volume_id = ?",
+            (book_id, volume_id),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Book not found")
+    epub_path = Path(row[0]).resolve()
+    if not epub_path.is_file() or epub_path.suffix.lower() != ".epub":
+        raise HTTPException(status_code=404, detail="EPUB not found")
+    from fastapi.responses import FileResponse
+    return FileResponse(str(epub_path), media_type="application/epub+zip")
 
 @app.post("/api/shelf/convert/{book_id}/{volume_id}")
 def convert_shelf_book(book_id: str, volume_id: int):

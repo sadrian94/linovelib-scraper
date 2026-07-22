@@ -1,7 +1,7 @@
 # 嗶哩輕小說下載器 · BiliNovel Downloader
 
 A desktop application for downloading and reading light novels from **嗶哩輕小說 (BiliNovel)**.  
-Built with **Tauri + React + TypeScript** on the frontend and **Python (FastAPI)** on the backend.
+Built with **Tauri + React + TypeScript** on the frontend and **Python (FastAPI)** on the server.
 
 ---
 
@@ -63,17 +63,33 @@ npm run tauri dev
 
 ```
 linovelib-scraper/
-├── backend/                # Python FastAPI backend
+├── server/                 # Python FastAPI server
 │   ├── bilinovel/          # Novel scraper & EPUB engine
-│   ├── server.py           # FastAPI server & REST API
+│   ├── app.py              # FastAPI server & REST API
 │   └── browser_utils.py    # Browser initialization helpers
-├── src/                    # React frontend
+├── src/                    # React frontend source
 │   ├── components/         # UI components (Downloader, Shelf, Reader, Settings)
 │   └── utils/i18n.ts       # Multilingual translation dictionary
 ├── src-tauri/              # Tauri (Rust) shell & build config
+│   └── binaries/           # Generated Python sidecar for release builds
+├── dist/                   # Generated Vite frontend assets (not committed)
 ├── BiliNovel-Download.bat  # Windows one-click launcher
 ├── requirements.txt        # Python dependencies
 └── package.json
+```
+
+`src/` and `server/` are source directories. `dist/` is recreated by Vite and
+is consumed by Tauri only when producing the desktop bundle.
+
+### Release build (Windows)
+
+The installed application runs a bundled Python sidecar; it does not depend on
+a system Python installation. Install the one release-only dependency once,
+then run:
+
+```bash
+pip install -r requirements-build.txt
+npm run tauri:build
 ```
 
 ---

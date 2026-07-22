@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from backend.server import resolve_shelf_path
+from server.app import resolve_shelf_path
 
 
 class TestShelfPaths(unittest.TestCase):

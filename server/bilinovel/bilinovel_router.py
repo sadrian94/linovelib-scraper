@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional, Union
 
 from .Editer import Editer
@@ -53,7 +54,7 @@ def download_single_volume(
     progressring_signal=None,
     cover_signal=None,
     edit_line_hang=None,
-) -> None:
+) -> str:
     with Editer(
         root_path=root_path,
         book_no=book_no,
@@ -64,8 +65,7 @@ def download_single_volume(
         print("Fetching book information...")
         success = editer.get_index_url()
         if not success:
-            print("Failed to fetch book information.")
-            return
+            raise RuntimeError("Failed to fetch book information; no EPUB was created.")
         print(f"{editer.book_name}-{editer.volume['volume_name']}", editer.author)
         print("****************************")
         editer.check_volume(is_gui=is_gui, signal=hang_signal, editline=edit_line_hang)
@@ -85,7 +85,10 @@ def download_single_volume(
 
         print("Generating EPUB...")
         epub_file = editer.get_epub()
+        if not isinstance(epub_file, str) or not epub_file or not Path(epub_file).is_file():
+            raise RuntimeError("EPUB generation returned no saved file.")
         print(f"EPUB generated successfully: {epub_file}")
+        return epub_file
 
 
 def downloader_router(
@@ -99,30 +102,30 @@ def downloader_router(
     progressring_signal=None,
     cover_signal=None,
     edit_line_hang=None,
-) -> None:
+) -> list[str]:
     if not book_no:
-        print("Check that the input is complete and correct.")
-        return
+        raise ValueError("Book ID is required")
 
     try:
         parsed = parse_volume_input(volume_no)
     except ValueError:
-        print("Check that the input is complete and correct.")
-        return
+        raise
 
     if parsed is None:
         query_chaps(book_no)
-        return
+        return []
 
     if isinstance(parsed, int):
-        download_single_volume(
+        return [download_single_volume(
             root_path, book_no, parsed, interval, num_thread,
             is_gui, hang_signal, progressring_signal, cover_signal, edit_line_hang,
-        )
+        )]
     else:
+        epub_files = []
         for vol in parsed:
-            download_single_volume(
+            epub_files.append(download_single_volume(
                 root_path, book_no, vol, interval, num_thread,
                 is_gui, hang_signal, progressring_signal, cover_signal, edit_line_hang,
-            )
+            ))
         print("All download tasks are complete.")
+        return epub_files

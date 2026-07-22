@@ -13,38 +13,63 @@ fn get_server_port(port: State<'_, Mutex<u16>>) -> u16 {
     *port.lock().unwrap()
 }
 
+fn start_server(app: &tauri::AppHandle, port: u16) -> Result<Child, String> {
+    if cfg!(debug_assertions) {
+        let project_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("src-tauri must have a project parent");
+        let script_path = project_root.join("server").join("app.py");
+        let python = if cfg!(target_os = "windows") { "python" } else { "python3" };
+        Command::new(python)
+            .arg(script_path)
+            .arg(port.to_string())
+            .current_dir(project_root)
+            .spawn()
+            .map_err(|error| format!("Failed to start development server: {error}"))
+    } else {
+        let sidecar_name = if cfg!(target_os = "windows") {
+            "binaries/bilinovel-server.exe"
+        } else {
+            "binaries/bilinovel-server"
+        };
+        let sidecar = app
+            .path()
+            .resource_dir()
+            .map_err(|error| format!("Could not resolve app resources: {error}"))?
+            .join(sidecar_name);
+        let data_dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|error| format!("Could not resolve app data directory: {error}"))?;
+        std::fs::create_dir_all(&data_dir)
+            .map_err(|error| format!("Could not create app data directory: {error}"))?;
+        Command::new(sidecar)
+            .arg(port.to_string())
+            .current_dir(&data_dir)
+            .env("BILINOVEL_DATA_DIR", &data_dir)
+            .spawn()
+            .map_err(|error| format!("Failed to start packaged server: {error}"))
+    }
+}
+
 fn main() {
     // Find a free port starting at 12400
     let port = portpicker::pick_unused_port().unwrap_or(8000);
 
-    // Start Python FastAPI sidecar
-    let python_exec = if cfg!(target_os = "windows") { "python" } else { "python3" };
-    
-    // Resolve relative path of the python script depending on current working directory
-    let mut script_path = std::path::PathBuf::from("backend/server.py");
-    if !script_path.exists() {
-        let parent_path = std::path::PathBuf::from("../backend/server.py");
-        if parent_path.exists() {
-            script_path = parent_path;
-        }
-    }
-
-    let child = Command::new(python_exec)
-        .args([script_path.to_str().unwrap_or("backend/server.py"), &port.to_string()])
-        .spawn();
-
-    let server_child = match child {
-        Ok(c) => Some(c),
-        Err(e) => {
-            eprintln!("Failed to spawn Python backend: {}", e);
-            None
-        }
-    };
-
     tauri::Builder::default()
-        .manage(Mutex::new(port))
-        .manage(ServerProcess {
-            child: Mutex::new(server_child),
+        .setup(move |app| {
+            let server_child = match start_server(app.handle(), port) {
+                Ok(child) => Some(child),
+                Err(error) => {
+                    eprintln!("Failed to spawn Python server: {error}");
+                    None
+                }
+            };
+            app.manage(Mutex::new(port));
+            app.manage(ServerProcess {
+                child: Mutex::new(server_child),
+            });
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![get_server_port])
         .on_window_event(|window, event| {

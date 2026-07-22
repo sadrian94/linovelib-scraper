@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 import tempfile
 import threading
@@ -20,13 +19,10 @@ from bs4 import BeautifulSoup
 from PIL import Image
 from rich.progress import track as tqdm
 
-from backend.browser_utils import cleanup_browser_profile, create_browser
-from backend.bilinovel.utils import (
+from server.browser_utils import cleanup_browser_profile, create_browser
+from server.bilinovel.epub_packer import Chapter, EpubPacker, JPEG, PNG, Resource
+from server.bilinovel.utils import (
     check_chars,
-    get_container_html,
-    get_content_html,
-    get_cover_html,
-    get_toc_html,
     replace_rubbish_text,
     text2htmls,
 )
@@ -35,6 +31,8 @@ lock = threading.RLock()
 
 READER_VIEWPORT = (390, 844)
 CHAPTER_READY_TIMEOUT_SECONDS = 15
+CHAPTER_STABLE_POLLS = 6
+CHAPTER_PENDING_RESTORE_POLLS = 4
 
 
 class IncompleteChapterContentError(RuntimeError):
@@ -84,6 +82,10 @@ class Editer:
             self.get_meta_data(main_html)
 
             self.img_url_map: dict[str, str] = {}
+            self.cover_image_name: Optional[str] = None
+            # Catalog order is authoritative.  Downloads may be concurrent, but
+            # EPUB spine and navigation are built from this list only.
+            self.chapter_documents: list[tuple[str, str, bool]] = []
             self.volume_no = volume_no
 
             self.epub_path = Path(root_path)
@@ -182,7 +184,10 @@ class Editer:
                 req.encoding = "GBK"
             if is_main_text:
                 self._wait_for_complete_chapter(url)
-                req = self.tab.html
+                # ``tab.html`` can expose the navigation response before a
+                # deferred chapterlog script has finished restoring paragraphs.
+                # Take an explicit live-DOM snapshot after the stability check.
+                req = self.tab.run_js("return document.documentElement.outerHTML;") or self.tab.html
             break
 
         if self.interval > 0:
@@ -190,36 +195,128 @@ class Editer:
         return req
 
     def _wait_for_complete_chapter(self, url: str) -> None:
-        """Wait for the live reader DOM without changing its source order."""
+        """Wait until the live reader DOM has stopped being reordered.
+
+        Linovelib's deferred ``chapterlog.js`` can permute existing ``<p>``
+        elements without changing either total text length or child count.  A
+        content fingerprint is therefore required; counting nodes alone races
+        the anti-scraping restoration script and saves shuffled prose.
+        """
         deadline = time.monotonic() + CHAPTER_READY_TIMEOUT_SECONDS
         stable_polls = 0
+        pending_polls = 0
         previous_signature = None
         script = """
             const root = document.querySelector('#acontent');
             if (!root) return '';
+            const html = root.innerHTML || '';
             const text = root.innerText || '';
             const failed = /內容加載失敗|内容加载失败/.test(text);
-            return `${failed}|${text.length}|${root.children.length}`;
+            let hash = 2166136261;
+            for (let i = 0; i < html.length; i++) {
+                hash ^= html.charCodeAt(i);
+                hash = Math.imul(hash, 16777619);
+            }
+            const shuffleableParagraphs = Array.from(root.children).filter(
+                node =>
+                    node.tagName === 'P' &&
+                    node.innerHTML.replace(/\\s+/g, '') !== ''
+            ).length;
+            // chapterlog only permutes paragraphs after the first twenty.
+            // Short chapters (notably illustration pages) legitimately retain
+            // the script tag but have no deferred work to wait for.
+            const pending =
+                shuffleableParagraphs > 20 &&
+                Boolean(document.querySelector('script[src*="chapterlog.js"]')) &&
+                !root.querySelector('p[data-k], p[data-bilinovel-restored]');
+            return `${failed}|${text.length}|${root.children.length}|${hash >>> 0}|${pending}`;
         """
 
         while time.monotonic() < deadline:
             signature = self.tab.run_js(script)
             if signature:
-                failed, text_length, child_count = signature.split("|", 2)
-                if failed == "false" and int(text_length) > 40:
+                failed, text_length, child_count, _fingerprint, pending = signature.split("|", 4)
+                if failed == "false" and pending == "true":
+                    pending_polls += 1
+                    if pending_polls >= CHAPTER_PENDING_RESTORE_POLLS:
+                        if self._restore_pending_chapter_order():
+                            return
+                        pending_polls = 0
+                else:
+                    pending_polls = 0
+                if failed == "false" and pending == "false" and int(text_length) > 40:
                     if signature == previous_signature:
                         stable_polls += 1
-                        if stable_polls >= 2:
+                        if stable_polls >= CHAPTER_STABLE_POLLS:
                             return
                     else:
                         stable_polls = 0
                         previous_signature = signature
             time.sleep(0.25)
 
+        if self._restore_pending_chapter_order():
+            return
         raise IncompleteChapterContentError(
             "The source did not provide stable, complete chapter content within "
             f"{CHAPTER_READY_TIMEOUT_SECONDS} seconds: {url}"
         )
+
+    def _restore_pending_chapter_order(self) -> bool:
+        """Restore a chapterlog-shuffled DOM if the page script never settles.
+
+        The source only shuffles non-empty direct paragraph children after the
+        first twenty.  Keep every other node in its original slot, matching the
+        reference packer's restoration behaviour.
+        """
+        script = """
+            return (() => {
+                const root = document.querySelector('#acontent');
+                if (!root || root.querySelector('p[data-k], p[data-bilinovel-restored]')) {
+                    return false;
+                }
+                const source = document.documentElement.outerHTML;
+                const chapterMatch = source.match(/chapterid\\s*:\\s*['"]?(\\d+)/i);
+                if (!chapterMatch) return false;
+
+                const nodes = Array.from(root.childNodes);
+                const slots = [];
+                const paragraphs = [];
+                for (let index = 0; index < nodes.length; index++) {
+                    const node = nodes[index];
+                    if (
+                        node.nodeType === Node.ELEMENT_NODE &&
+                        node.tagName === 'P' &&
+                        node.innerHTML.replace(/\\s+/g, '') !== ''
+                    ) {
+                        slots.push(index);
+                        paragraphs.push(node);
+                    }
+                }
+                if (paragraphs.length <= 20) return false;
+
+                const indices = Array.from({ length: paragraphs.length }, (_, index) => index);
+                let seed = Number(chapterMatch[1]) * 126 + 232;
+                for (let index = indices.length - 1; index > 20; index--) {
+                    seed = (seed * 9302 + 49397) % 233280;
+                    const swapIndex = Math.floor(seed / 233280 * (index - 20 + 1)) + 20;
+                    [indices[index], indices[swapIndex]] = [indices[swapIndex], indices[index]];
+                }
+                const restored = paragraphs.slice();
+                for (let index = 0; index < paragraphs.length; index++) {
+                    restored[indices[index]] = paragraphs[index];
+                }
+                for (let index = 0; index < slots.length; index++) {
+                    nodes[slots[index]] = restored[index];
+                }
+                root.replaceChildren(...nodes);
+                document
+                    .querySelectorAll('script[src*="chapterlog.js"]')
+                    .forEach(node => node.remove());
+                root.querySelectorAll('p').forEach(node => node.dataset.bilinovelRestored = 'true');
+                return true;
+            })()
+        """
+        return bool(self.tab.run_js(script))
 
     def _reader_url(self, url: str) -> str:
         """Map a catalog URL to the reader host without changing its path."""
@@ -335,13 +432,10 @@ class Editer:
             if img_url not in self.img_url_map:
                 self.img_url_map[img_url] = str(len(self.img_url_map)).zfill(2)
             img_symbol = f'  <img alt="{self.img_url_map[img_url]}" src="../Images/{self.img_url_map[img_url]}.jpg"/>\n'
-            if "00" in img_symbol:
-                text_html = text_html.replace(img_urlre, "")
-            else:
-                text_html = text_html.replace(img_urlre, img_symbol)
-                symbol_index = text_html.index(img_symbol)
-                if text_html[symbol_index - 1] != "\n":
-                    text_html = text_html[:symbol_index] + "\n" + text_html[symbol_index:]
+            text_html = text_html.replace(img_urlre, img_symbol)
+            symbol_index = text_html.index(img_symbol)
+            if symbol_index > 0 and text_html[symbol_index - 1] != "\n":
+                text_html = text_html[:symbol_index] + "\n" + text_html[symbol_index:]
 
         text_soup = BeautifulSoup(text_html, "html.parser")
         text = text_soup.find("div", id="TextContent") or text_soup.find(
@@ -461,7 +555,6 @@ class Editer:
 
     def get_text(self) -> None:
         self.make_folder()
-        repeat_img_strs: list[str] = []
         text_no = 0
         for chap_no, (chap_name, chap_url) in enumerate(
             zip(self.volume["chap_names"], self.volume["chap_urls"])
@@ -472,34 +565,30 @@ class Editer:
             )
             text = self.convert_text(text)
 
-            if chap_name == self.color_chap_name:
-                text_html_color = text2htmls(self.color_page_name, text)
-            else:
-                file_name = self.text_path / f"{str(text_no).zfill(2)}.xhtml"
-                text_html = text2htmls(chap_name, text)
-                text_no += 1
-                file_name.write_text(text_html, encoding="utf-8")
-                repeat_img_strs += re.findall(
-                    r'<img alt="[^"]*" src="../Images/\d+.jpg"/>', text_html
-                )
+            # Illustration pages are ordinary catalog chapters.  Keeping them
+            # here preserves their source position in both spine and TOC.
+            file_name = self.text_path / f"{str(text_no).zfill(2)}.xhtml"
+            text_html = text2htmls(chap_name, text)
+            text_no += 1
+            file_name.write_text(text_html, encoding="utf-8")
+            self.chapter_documents.append((chap_name, f"Text/{file_name.name}", True))
 
             if is_fix_next_chap_url:
                 self.volume["chap_urls"][chap_no + 1] = next_chap_url
 
-        if self.is_color_page:
-            text_html_color_new = []
-            textfile = self.text_path / "color.xhtml"
-            for img_line in repeat_img_strs:
-                if img_line in text_html_color:
-                    text_html_color = text_html_color.replace(img_line + "\n", "")
-            textfile.write_text(text_html_color, encoding="utf-8")
+        # Add the book cover after inline images so no prose illustration is
+        # mistaken for a reserved cover slot.  It is metadata, not a chapter.
+        if not self.check_url(self.cover_url_back):
+            if self.cover_url_back not in self.img_url_map:
+                self.img_url_map[self.cover_url_back] = str(len(self.img_url_map)).zfill(2)
+            self.cover_image_name = self.img_url_map[self.cover_url_back]
 
     def get_image(self, is_gui: bool = False, signal=None) -> None:
         for url in self.img_url_map:
             self.pool.submit(self.get_html_content, url)
         img_path = self.img_path
         if is_gui:
-            from backend.server import session
+            from server.app import session
             len_iter = len(self.img_url_map.items())
             session.set_progress(0)
             for i, (img_url, img_name) in enumerate(self.img_url_map.items()):
@@ -512,24 +601,20 @@ class Editer:
                 (img_path / f"{img_name}.jpg").write_bytes(content)
 
     def get_cover(self, is_gui: bool = False, signal=None) -> None:
-        img_w, img_h = 300, 300
+        if self.cover_image_name is None:
+            print("No cover image found. Add one manually with a third-party EPUB editor.")
+            return
         try:
-            imgfile = self.img_path / "00.jpg"
-            img = Image.open(str(imgfile))
-            img_w, img_h = img.size
+            imgfile = self.img_path / f"{self.cover_image_name}.jpg"
+            img_w, img_h = Image.open(str(imgfile)).size
             signal_msg = (str(imgfile), img_h, img_w)
             if is_gui:
                 signal.emit(signal_msg)
         except Exception as e:
             print(e)
             print("No cover image found. Add one manually with a third-party EPUB editor.")
-        (self.text_path / "cover.xhtml").write_text(
-            get_cover_html(img_w, img_h), encoding="utf-8"
-        )
 
     def check_volume(self, is_gui: bool = False, signal=None, editline=None) -> None:
-        self.color_chap_name = self.convert_text(self.color_chap_name)
-        self.color_page_name = self.convert_text(self.color_page_name)
         chap_names = self.volume["chap_names"]
         chap_num = len(self.volume["chap_names"])
         for chap_no, url in enumerate(self.volume["chap_urls"]):
@@ -541,24 +626,6 @@ class Editer:
                         )
                     else:
                         self.missing_last_chap_list.append(chap_names[chap_no - 1])
-
-        if self.color_chap_name not in self.volume["chap_names"]:
-            self.color_chap_name = self.convert_text(self.hand_in_color_page_name(
-                is_gui, signal, editline
-            ))
-        self.volume["color_chap_name"] = self.color_chap_name
-
-        if self.color_chap_name == "":
-            self.is_color_page = False
-            if not self.check_url(self.cover_url_back):
-                self.img_url_map[self.cover_url_back] = str(
-                    len(self.img_url_map)
-                ).zfill(2)
-                print("**************")
-                print(
-                    "No color page found; using the cover image from the book page for this volume."
-                )
-                print("**************")
 
     @staticmethod
     def check_url(url: str) -> bool:
@@ -593,7 +660,7 @@ class Editer:
     ) -> str:
         if is_gui:
             # Call FastAPI server session blocking prompt instead of PyQt GUI
-            from backend.server import session
+            from server.app import session
             content = session.request_input(error_msg)
         else:
             content = input(error_msg)
@@ -625,36 +692,15 @@ class Editer:
         return self.hand_in_msg(error_msg, is_gui, signal, editline)
 
     def get_toc(self) -> None:
-        if self.is_color_page:
-            ind = self.volume["chap_names"].index(self.color_chap_name)
-            self.volume["chap_names"].pop(ind)
-        toc_htmls = get_toc_html(self.book_name, self.volume["chap_names"])
-        (self.temp_path / "OEBPS" / "toc.ncx").write_text(toc_htmls, encoding="utf-8")
+        # Retained for callers using the historic workflow.  The deterministic
+        # packer writes both navigation documents from ``chapter_documents``.
+        return None
 
     def get_content(self) -> None:
-        content_html = get_content_html(
-            self.book_name,
-            self.volume["volume_name"],
-            self.volume_no,
-            self.author,
-            self.publisher,
-            self.brief,
-            self.tag_list,
-            len(self.volume["chap_names"]),
-            len(os.listdir(self.img_path)),
-            self.is_color_page,
-        )
-        (self.temp_path / "OEBPS" / "content.opf").write_text(
-            content_html, encoding="utf-8"
-        )
+        return None
 
     def get_epub_head(self) -> None:
-        metainf_folder = self.temp_path / "META-INF"
-        metainf_folder.mkdir(exist_ok=True)
-        (metainf_folder / "container.xml").write_text(
-            get_container_html(), encoding="utf-8"
-        )
-        (self.temp_path / "mimetype").write_text("application/epub+zip")
+        return None
 
     def get_epub(self) -> str:
         import shutil
@@ -676,17 +722,37 @@ class Editer:
         if cache_path.exists():
             shutil.rmtree(cache_path)
         
-        # Copy unpacked files before zip compression
-        shutil.copytree(self.temp_path / "OEBPS", cache_path / "OEBPS")
-        
-        with zipfile.ZipFile(str(epub_file), "w", zipfile.ZIP_DEFLATED) as zf:
-            for dirpath_str, _, filenames in os.walk(self.temp_path):
-                dirpath = Path(dirpath_str)
-                fpath = str(dirpath.relative_to(self.temp_path))
-                if fpath == ".":
-                    fpath = ""
-                for filename in filenames:
-                    zf.write(str(dirpath / filename), f"{fpath}/{filename}" if fpath else filename)
+        packer = EpubPacker(
+            f"{self.book_name}-{self.volume['volume_name']}", self.author
+        )
+
+        packer.publisher = self.publisher
+        packer.description = self.brief
+        packer.subjects = self.tag_list
+        packer.source = self.main_page
+        packer.series = self.book_name
+        packer.series_index = self.volume_no
+        for title, href, in_toc in self.chapter_documents:
+            content = (self.temp_path / "OEBPS" / href).read_text(encoding="utf-8")
+            packer.add_chapter(Chapter(title, href, content, in_toc))
+        for image in sorted(self.img_path.iterdir(), key=lambda item: item.name):
+            if not image.is_file():
+                continue
+            media_type = PNG if image.suffix.lower() == ".png" else JPEG
+            packer.add_resource(Resource(
+                f"Images/{image.name}", image.read_bytes(), media_type,
+                is_cover=image.name == f"{self.cover_image_name}.jpg",
+            ))
+        packer.write(epub_file)
+
+        # Keep the in-app reader cache byte-for-byte aligned with the finished
+        # EPUB's OEBPS payload rather than an earlier staging directory.
+        with zipfile.ZipFile(epub_file) as archive:
+            for member in archive.infolist():
+                if not member.is_dir() and member.filename.startswith("OEBPS/"):
+                    destination = cache_path / member.filename
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_bytes(archive.read(member))
                     
         # Register in SQLite database
         conn = None
@@ -705,7 +771,8 @@ class Editer:
                 self.volume['volume_name'],
                 self.author,
                 self.publisher,
-                str(cache_path / "OEBPS" / "Images" / "00.jpg"),
+                str(cache_path / "OEBPS" / "Images" / f"{self.cover_image_name}.jpg")
+                if self.cover_image_name is not None else "",
                 str(epub_file),
                 str(cache_path),
                 datetime.now().strftime("%Y-%m-%d %H:%M:%S")

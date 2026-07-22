@@ -1,7 +1,12 @@
 import unittest
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock, call, patch
 
-from backend.bilinovel.Editer import Editer, IncompleteChapterContentError
+from server.bilinovel.Editer import (
+    CHAPTER_PENDING_RESTORE_POLLS,
+    CHAPTER_STABLE_POLLS,
+    Editer,
+    IncompleteChapterContentError,
+)
 
 
 class TestChapterContent(unittest.TestCase):
@@ -29,6 +34,67 @@ class TestChapterContent(unittest.TestCase):
         self.assertEqual(text, '<p>Before.</p>\n<p>After.</p>\n')
         self.assertNotIn("Advertisement", text)
         self.assertNotIn("iframe", text)
+
+    def test_get_page_text_keeps_the_first_inline_image(self):
+        editer = Editer.__new__(Editer)
+        editer.img_url_map = {}
+        content = (
+            '<div id="acontent"><p>Before.</p>'
+            '<img src="https://img3.readpai.com/illustration.jpg"/>'
+            '<p>After.</p></div>'
+        )
+
+        text = editer.get_page_text(content)
+
+        self.assertIn('src="../Images/00.jpg"', text)
+        self.assertIn("Before.", text)
+        self.assertIn("After.", text)
+
+    def test_waits_for_paragraph_reordering_to_settle(self):
+        editer = Editer.__new__(Editer)
+        editer.tab = MagicMock()
+        editer.tab.run_js.side_effect = [
+            "false|100|3|before|false",
+            "false|100|3|before|false",
+            "false|100|3|after|false",
+            *("false|100|3|after|false" for _ in range(CHAPTER_STABLE_POLLS)),
+        ]
+
+        with patch("server.bilinovel.Editer.time.sleep"), patch(
+            "server.bilinovel.Editer.time.monotonic", return_value=0
+        ):
+            editer._wait_for_complete_chapter("https://example.test/chapter")
+
+        # The same length/count with a changed fingerprint must reset the
+        # stability window; otherwise deferred chapterlog reordering races us.
+        self.assertEqual(editer.tab.run_js.call_count, CHAPTER_STABLE_POLLS + 3)
+
+    def test_restore_pending_chapter_order_returns_browser_result(self):
+        editer = Editer.__new__(Editer)
+        editer.tab = MagicMock()
+        editer.tab.run_js.return_value = True
+
+        self.assertTrue(editer._restore_pending_chapter_order())
+        script = editer.tab.run_js.call_args.args[0]
+        self.assertIn("return (() =>", script)
+        self.assertIn("chapterid", script)
+
+    def test_restores_pending_chapter_without_waiting_for_full_timeout(self):
+        editer = Editer.__new__(Editer)
+        editer.tab = MagicMock()
+        editer.tab.run_js.side_effect = [
+            *("false|100|30|shuffled|true" for _ in range(CHAPTER_PENDING_RESTORE_POLLS)),
+            True,
+        ]
+
+        with patch("server.bilinovel.Editer.time.sleep"), patch(
+            "server.bilinovel.Editer.time.monotonic", return_value=0
+        ):
+            editer._wait_for_complete_chapter("https://example.test/chapter")
+
+        self.assertEqual(
+            editer.tab.run_js.call_count, CHAPTER_PENDING_RESTORE_POLLS + 1
+        )
 
     def test_get_chap_text_trims_continuation_page_boundaries(self):
         editer = Editer.__new__(Editer)

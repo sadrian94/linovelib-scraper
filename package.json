@@ -7,14 +7,18 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build:sidecar": "powershell -ExecutionPolicy Bypass -File scripts/build-sidecar.ps1",
+    "tauri:build": "npm run build:sidecar && tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-shell": "^2.0.0",
+    "epubjs": "^0.3.93",
     "lucide-react": "^0.344.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "react-reader": "^2.0.15"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",
