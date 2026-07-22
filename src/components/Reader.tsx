@@ -81,7 +81,7 @@ export default function Reader({ bookId, volumeId, port, language, onClose }: Re
           const colorRes = await fetch(colorUrl);
           if (colorRes.ok && active) {
             chaps.push({ 
-              title: translations[language]?.['reader.colorPage'] || '彩頁', 
+              title: translations[language]?.['reader.colorPage'] || 'Color pages',
               file: 'color.xhtml' 
             });
           }

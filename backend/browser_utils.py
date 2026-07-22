@@ -88,6 +88,6 @@ def create_browser() -> Chromium:
             co.headless(True)
     co.set_local_port(port)
 
-    print(f"使用浏览器: {browser_path} (Headless: {headless})")
-    print(f"调试端口: {port}")
+    print(f"Using browser: {browser_path} (Headless: {headless})")
+    print(f"Debug port: {port}")
     return Chromium(co)

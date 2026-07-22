@@ -161,7 +161,7 @@ class Editer:
                 "<title>Access denied | www.linovelib.com used Cloudflare to restrict access</title>"
                 in req
             ):
-                print("下载频繁，触发反爬，5秒后重试....")
+                print("Rate limit detected; retrying in 5 seconds...")
                 time.sleep(5)
                 self.tab.get(url)
                 req = self.tab.html
@@ -170,34 +170,60 @@ class Editer:
             break
 
         if is_main_text:
-            bf = BeautifulSoup(req, "html.parser")
-            p_eles = self.tab.eles("tag:p")
-            for p in p_eles:
-                if p.style(style="display") == "none":
-                    all_attrs = p.attrs
-                    class_key = None
-                    class_value = None
-                    for key in all_attrs.keys():
-                        if "data-" in key:
-                            class_key = key
-                            class_value = all_attrs[class_key]
-                    if class_key is not None:
-                        p_elements_to_remove = bf.find_all("p", {class_key: class_value})
-                        for p in p_elements_to_remove:
-                            p.decompose()
-
-            p_tags = bf.find_all("p")
-            for p in p_tags:
-                all_attrs = p.attrs
-                keys_to_delete = [key for key in all_attrs.keys() if "data-" in key]
-                for key in keys_to_delete:
-                    del p[key]
-
-            req = str(bf)
+            self._materialize_reading_order()
+            req = self.tab.html
 
         if self.interval > 0:
             time.sleep(self.interval)
         return req
+
+    def _materialize_reading_order(self) -> None:
+        """Put visible chapter paragraphs into the order the browser renders.
+
+        Some Linovelib responses deliberately scramble paragraph nodes and use
+        client-side layout to restore their reading order.  Serializing the DOM
+        before that layout is materialized permanently loses the sequence in an
+        EPUB.  This runs in the loaded page so computed positions are available,
+        removes hidden decoys, and leaves ordinary pages in their DOM order.
+        """
+        script = """
+(() => {
+  const content = document.querySelector('#TextContent, #acontent');
+  if (!content) return false;
+
+  const paragraphs = Array.from(content.children)
+    .filter((node) => node.tagName === 'P')
+    .map((node, index) => {
+      const style = window.getComputedStyle(node);
+      const rect = node.getBoundingClientRect();
+      return { node, index, hidden: style.display === 'none' ||
+          style.visibility === 'hidden' || Number(style.opacity) === 0,
+          top: rect.top, left: rect.left };
+    });
+
+  const visible = paragraphs.filter((paragraph) => !paragraph.hidden);
+  if (!visible.length) return false;
+
+  const hasLayoutOrder = visible.some((paragraph, index) =>
+    index && (paragraph.top !== visible[index - 1].top ||
+      paragraph.left !== visible[index - 1].left));
+  if (hasLayoutOrder) {
+    visible.sort((a, b) => a.top - b.top || a.left - b.left || a.index - b.index);
+  }
+
+  for (const paragraph of paragraphs) {
+    if (paragraph.hidden) paragraph.node.remove();
+  }
+  for (const paragraph of visible) content.appendChild(paragraph.node);
+  return true;
+})()
+"""
+        try:
+            self.tab.run_js(script)
+        except Exception as exc:
+            # A page without a usable layout is still downloadable in source
+            # order; do not silently drop its text because the mitigation failed.
+            print(f"Could not materialize chapter reading order: {exc}")
 
     def get_html_content(self, url: str, is_buffer: bool = False) -> bytes:
         if is_buffer:
@@ -253,7 +279,7 @@ class Editer:
         self.volume = {"chap_urls": [], "chap_names": [], "volume_name": ""}
         chap_html_list = self.get_chap_list(is_print=False)
         if len(chap_html_list) < self.volume_no:
-            print("输入卷号超过实际卷数！")
+            print("The requested volume number exceeds the number of available volumes.")
             return False
         volume_array = self.volume_no - 1
         chap_html = chap_html_list[volume_array]
@@ -283,7 +309,11 @@ class Editer:
     def get_page_text(self, content_html: str) -> str:
         is_transfer_rubbish_code = "woff2" in content_html
         bf = BeautifulSoup(content_html, "html.parser")
-        text_with_head = bf.find("div", {"id": "TextContent"})
+        text_with_head = bf.find("div", {"id": "TextContent"}) or bf.find(
+            "div", {"id": "acontent"}
+        )
+        if text_with_head is None:
+            raise ValueError("Chapter page does not contain a text content container")
 
         self.remove_element(text_with_head, id="show-more-images")
         self.remove_element(text_with_head, class_="google-auto-placed ap_container")
@@ -312,7 +342,10 @@ class Editer:
                 if text_html[symbol_index - 1] != "\n":
                     text_html = text_html[:symbol_index] + "\n" + text_html[symbol_index:]
 
-        text = BeautifulSoup(text_html, "html.parser").find("div", id="TextContent")
+        text_soup = BeautifulSoup(text_html, "html.parser")
+        text = text_soup.find("div", id="TextContent") or text_soup.find(
+            "div", id="acontent"
+        )
 
         match = re.findall(r"<p(\d+)>", str(text))
         if len(match) > 0:
@@ -326,7 +359,9 @@ class Editer:
             text = text[:-1]
 
         msg = "<br/><br/><br/>————————————以下为告示，读者请无视——————————————<p>"
-        text = text[: text.find(msg)]
+        notice_index = text.find(msg)
+        if notice_index != -1:
+            text = text[:notice_index]
 
         if is_transfer_rubbish_code:
             text = replace_rubbish_text(text)
@@ -354,7 +389,7 @@ class Editer:
             if page_no == 1:
                 str_out = chap_name
             else:
-                str_out = f"    正在下载第{page_no}页......"
+                str_out = f"    Downloading page {page_no}..."
             print(str_out)
             content_html = self.get_html(url, is_gbk=False, is_main_text=True)
             text = self.get_page_text(content_html)
@@ -436,7 +471,7 @@ class Editer:
                 signal.emit(signal_msg)
         except Exception as e:
             print(e)
-            print("没有封面图片，请自行用第三方EPUB编辑器手动添加封面")
+            print("No cover image found. Add one manually with a third-party EPUB editor.")
         (self.text_path / "cover.xhtml").write_text(
             get_cover_html(img_w, img_h), encoding="utf-8"
         )
@@ -469,7 +504,9 @@ class Editer:
                     len(self.img_url_map)
                 ).zfill(2)
                 print("**************")
-                print("提示：没有彩页，但主页封面存在，将使用主页的封面图片作为本卷图书封面")
+                print(
+                    "No color page found; using the cover image from the book page for this volume."
+                )
                 print("**************")
 
     @staticmethod
@@ -512,18 +549,26 @@ class Editer:
     def hand_in_url(
         self, chap_name: str, is_gui: bool = False, signal=None, editline=None
     ) -> str:
-        error_msg = f'章节"{chap_name}"连接失效，请手动输入该章节链接(手机版"{self.url_head}"开头的链接):'
+        error_msg = (
+            f'Chapter "{chap_name}" has an invalid link. Enter its mobile-page URL '
+            f'(beginning with "{self.url_head}"): '
+        )
         return self.hand_in_msg(error_msg, is_gui, signal, editline)
 
     def hand_in_color_page_name(
         self, is_gui: bool = False, signal=None, editline=None
     ) -> str:
         if is_gui:
-            error_msg = "插图页面不存在，需要下拉选择插图页标题，若不需要插图页则保持本栏为空直接点确定："
+            error_msg = (
+                "The illustration page is missing. Select its title, or leave this blank "
+                "and confirm to skip it: "
+            )
             editline.addItems(self.volume["chap_names"])
             editline.setCurrentIndex(-1)
         else:
-            error_msg = "插图页面不存在，需要手动输入插图页标题，若不需要插图页则不输入直接回车："
+            error_msg = (
+                "The illustration page is missing. Enter its title, or press Enter to skip it: "
+            )
         return self.hand_in_msg(error_msg, is_gui, signal, editline)
 
     def get_toc(self) -> None:
@@ -563,17 +608,17 @@ class Editer:
         import sqlite3
         from datetime import datetime
 
-        # Build book subdirectory: out/書名/
+        # Build book subdirectory: out/book-name/
         safe_book_name = check_chars(self.book_name)
         book_dir = self.epub_path / safe_book_name
         book_dir.mkdir(parents=True, exist_ok=True)
 
-        # Filename: 書名 第X卷.epub
+        # Filename: book-name volume-X.epub
         safe_volume_name = check_chars(self.volume['volume_name'])
         epub_name = f"{safe_book_name} {safe_volume_name}"
         epub_file = book_dir / f"{epub_name}.epub"
 
-        # Cache for in-app reader: out/書名/.library/bookno_volno/
+        # Cache for in-app reader: out/book-name/.library/book-number_volume-number/
         cache_path = book_dir / ".library" / f"{self.book_no}_{self.volume_no}"
         if cache_path.exists():
             shutil.rmtree(cache_path)

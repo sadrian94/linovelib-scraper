@@ -404,7 +404,7 @@ class MockSignal:
         elif self.name == "hang" and self.edit_line:
             self.edit_line._is_hidden = False
             logs = session.get_logs_copy()
-            prompt = session.input_needed_prompt or (logs[-1] if logs else "请输入所需資訊：")
+            prompt = session.input_needed_prompt or (logs[-1] if logs else "Enter the required information:")
             user_input = session.request_input(prompt, self.edit_line.options)
             self.edit_line._text = user_input
             self.edit_line._is_hidden = True
